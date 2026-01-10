@@ -1,0 +1,9 @@
+{
+  "name": "Status Tray",
+  "description": "Automatic system tray for apps using StatusNotifierItem/DBusMenu. No configuration needed - just works.",
+  "uuid": "status-tray@keithvassallo.mt",
+  "shell-version": ["45", "46", "47", "48", "49"],
+  "version": 1,
+  "url": "https://github.com/keithvassallomt/status-tray",
+  "settings-schema": "org.gnome.shell.extensions.status-tray"
+}

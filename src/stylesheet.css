@@ -1,0 +1,16 @@
+/* Status Tray Extension Styles */
+
+.status-tray-icon {
+    icon-size: 16px;
+}
+
+/* Panel button styling */
+.panel-button.status-tray-button {
+    -natural-hpadding: 4px;
+}
+
+/* Symbolic icon styling for dark mode */
+.status-tray-icon-symbolic {
+    icon-size: 16px;
+    -st-icon-style: symbolic;
+}

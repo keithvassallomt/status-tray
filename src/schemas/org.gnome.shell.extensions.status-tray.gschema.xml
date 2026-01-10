@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="status-tray">
+  <schema id="org.gnome.shell.extensions.status-tray" path="/org/gnome/shell/extensions/status-tray/">
+
+    <key name="disabled-apps" type="as">
+      <default>[]</default>
+      <summary>Disabled apps</summary>
+      <description>List of app IDs to hide from the tray. Apps in this list will not show tray icons even when running.</description>
+    </key>
+
+    <key name="icon-mode" type="s">
+      <default>'symbolic'</default>
+      <summary>Icon display mode</summary>
+      <description>How to display tray icons. 'symbolic' converts icons to monochrome to match the panel style. 'original' shows the app's original colored icons.</description>
+    </key>
+
+    <key name="app-order" type="as">
+      <default>[]</default>
+      <summary>App order</summary>
+      <description>Custom ordering of tray items by app ID. Apps not in this list appear in discovery order.</description>
+    </key>
+
+    <key name="icon-overrides" type="a{ss}">
+      <default>{}</default>
+      <summary>Icon overrides</summary>
+      <description>Map of app IDs to custom icon names or file paths. When set, these override the app-provided icon.</description>
+    </key>
+
+    <key name="icon-effect-overrides" type="a{ss}">
+      <default>{}</default>
+      <summary>Per-app icon effect overrides</summary>
+      <description>Map of app IDs to JSON-encoded effect parameters. Each value is a JSON object with: desaturation (0-1), brightness (-1 to 1), contrast (0-2), useTint (boolean), tintColor ([r,g,b] 0-1 each).</description>
+    </key>
+
+  </schema>
+</schemalist>
