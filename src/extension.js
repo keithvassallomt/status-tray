@@ -27,7 +27,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 // Debug logging - set to true during development
-const DEBUG = true;
+const DEBUG = false;
 
 // Fallback icon when icon loading fails
 const FALLBACK_ICON_NAME = 'image-loading-symbolic';
@@ -130,10 +130,15 @@ function getSNIInterfaceInfo() {
     return _sniInterfaceInfo;
 }
 
+// Cached settings object for dark mode detection
+let _interfaceSettings = null;
+
 function isDarkMode() {
     try {
-        const settings = new Gio.Settings({ schema: 'org.gnome.desktop.interface' });
-        const colorScheme = settings.get_string('color-scheme');
+        if (!_interfaceSettings) {
+            _interfaceSettings = new Gio.Settings({ schema: 'org.gnome.desktop.interface' });
+        }
+        const colorScheme = _interfaceSettings.get_string('color-scheme');
         return colorScheme === 'prefer-dark';
     } catch (e) {
         // Fallback: assume dark mode (most common)
@@ -188,6 +193,9 @@ const TrayItem = GObject.registerClass({
 
         // Signal subscription IDs for cleanup
         this._signalIds = [];
+
+        // Track temp file path for cleanup
+        this._tempFilePath = null;
 
         // Create icon widget with fallback
         this._icon = new St.Icon({
@@ -951,6 +959,9 @@ const TrayItem = GObject.registerClass({
             ]);
             pixbuf.savev(tempPath, 'png', [], []);
 
+            // Track temp file for cleanup in destroy()
+            this._tempFilePath = tempPath;
+
             const file = Gio.File.new_for_path(tempPath);
             const gicon = new Gio.FileIcon({ file });
             this._icon.set_gicon(gicon);
@@ -1239,6 +1250,17 @@ const TrayItem = GObject.registerClass({
         // Clean up proxy
         if (this._proxy) {
             this._proxy = null;
+        }
+
+        // Clean up temp icon file if created
+        if (this._tempFilePath) {
+            try {
+                const file = Gio.File.new_for_path(this._tempFilePath);
+                file.delete(null);
+            } catch (e) {
+                // Ignore cleanup errors - file may not exist or already deleted
+            }
+            this._tempFilePath = null;
         }
 
         debug(`Destroyed TrayItem for ${this._busName}`);
@@ -1583,6 +1605,9 @@ export default class StatusTrayExtension extends Extension {
         // Map of uniqueId -> TrayItem
         this._items = new Map();
 
+        // Timeout ID for batched reordering
+        this._reorderTimeoutId = null;
+
         // GSettings signal connection IDs
         this._settingsConnections = [];
 
@@ -1638,6 +1663,12 @@ export default class StatusTrayExtension extends Extension {
             this._watcher = null;
         }
 
+        // Cancel any pending reorder timeout
+        if (this._reorderTimeoutId) {
+            GLib.source_remove(this._reorderTimeoutId);
+            this._reorderTimeoutId = null;
+        }
+
         // Disconnect settings signals
         for (const id of this._settingsConnections) {
             this._settings.disconnect(id);
@@ -1688,11 +1719,21 @@ export default class StatusTrayExtension extends Extension {
         const trayItem = new TrayItem(busName, objectPath, this._settings);
         this._items.set(uniqueId, trayItem);
 
-        // Listen for appId resolution to update watcher's stored appId
+        // Listen for appId resolution to update watcher's stored appId and reposition
         trayItem.connect('appid-resolved', (item, resolvedAppId) => {
             if (this._watcher) {
                 this._watcher.updateItemAppId(uniqueId, resolvedAppId);
             }
+            // Trigger a reorder to position the item correctly now that we have the real appId
+            // Use a short delay to batch multiple resolutions together
+            if (this._reorderTimeoutId) {
+                GLib.source_remove(this._reorderTimeoutId);
+            }
+            this._reorderTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                this._reorderTimeoutId = null;
+                this._reorderItems();
+                return GLib.SOURCE_REMOVE;
+            });
         });
 
         // Determine position based on app-order setting (use stored appId if available)
@@ -1810,8 +1851,18 @@ export default class StatusTrayExtension extends Extension {
      * We use position 0 to place tray icons at the leftmost position in the right box
      */
     _calculatePosition(appId) {
+        // If appId is a bus name (starts with :), don't use app-order positioning
+        // Bus names are ephemeral and shouldn't be used for ordering
+        if (appId.startsWith(':')) {
+            return 0;
+        }
+
         const appOrder = this._settings.get_strv('app-order');
-        const orderIndex = appOrder.indexOf(appId);
+
+        // Filter out bus names from app-order when calculating position
+        // Only count real app IDs (not :1.xxx style bus names)
+        const validOrder = appOrder.filter(id => !id.startsWith(':'));
+        const orderIndex = validOrder.indexOf(appId);
 
         if (orderIndex === -1) {
             // Items not in app-order get position 0 (leftmost in right box)

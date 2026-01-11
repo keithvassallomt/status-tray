@@ -20,7 +20,7 @@ import Gtk from 'gi://Gtk';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 // Debug logging
-const DEBUG = true;
+const DEBUG = false;
 function debug(msg) {
     if (DEBUG) {
         console.log(`[StatusTray/prefs] ${msg}`);
