@@ -64,6 +64,7 @@ const SNI_INTERFACE_XML = `
     <property name="AttentionIconName" type="s" access="read"/>
     <property name="AttentionIconPixmap" type="a(iiay)" access="read"/>
     <property name="AttentionMovieName" type="s" access="read"/>
+    <property name="ToolTip" type="(sa(iiay)ss)" access="read"/>
     <method name="ContextMenu">
       <arg name="x" type="i" direction="in"/>
       <arg name="y" type="i" direction="in"/>
@@ -155,6 +156,17 @@ function stripMnemonics(label) {
     // Replace single underscore before a character with nothing
     // But preserve double underscores as single underscore
     return label.replace(/__/g, '\x00').replace(/_/g, '').replace(/\x00/g, '_');
+}
+
+/**
+ * Extract Flatpak app ID from IconThemePath
+ * Flatpak apps have paths like: /run/user/1000/app/org.ferdium.Ferdium/.org.chromium.Chromium.xxx
+ * Returns the app ID (e.g., "org.ferdium.Ferdium") or null if not a Flatpak path
+ */
+function extractFlatpakAppId(iconThemePath) {
+    if (!iconThemePath) return null;
+    const match = iconThemePath.match(/\/run\/user\/\d+\/app\/([^/]+)/);
+    return match ? match[1] : null;
 }
 
 /**
@@ -290,20 +302,6 @@ const TrayItem = GObject.registerClass({
      * Fetch properties using the proxy's cached values or direct calls
      */
     _fetchPropertiesFromProxy() {
-        // Get SNI Id property for stable app identification
-        // This is more reliable than bus name which changes on each app restart
-        const idVariant = this._proxy.get_cached_property('Id');
-        if (idVariant) {
-            const sniId = idVariant.deep_unpack();
-            if (sniId && sniId.length > 0 && !sniId.startsWith(':')) {
-                const oldAppId = this._appId;
-                this._appId = sniId;
-                debug(`Updated appId from ${oldAppId} to ${this._appId} (from SNI Id)`);
-                // Notify extension that appId was resolved (for settings persistence)
-                this.emit('appid-resolved', this._appId);
-            }
-        }
-
         const iconThemePath = this._proxy.get_cached_property('IconThemePath');
         if (iconThemePath) {
             this._iconThemePath = iconThemePath.deep_unpack();
@@ -316,7 +314,64 @@ const TrayItem = GObject.registerClass({
             debug(`Got Menu path from proxy: ${this._menuPath}`);
         }
 
+        // Resolve app ID using priority order:
+        // 1. ToolTip title (best for Electron apps)
+        // 2. Flatpak app ID from IconThemePath
+        // 3. SNI Id (if not generic chrome_status_icon_*)
+        // 4. Keep existing fallback from object path
+        this._resolveAppId();
+
         this._updateIcon();
+    }
+
+    /**
+     * Resolve the app ID using multiple sources for better Electron app identification
+     */
+    _resolveAppId() {
+        const oldAppId = this._appId;
+        let newAppId = null;
+
+        // Try ToolTip title first (most reliable for Electron apps)
+        const toolTipVariant = this._proxy.get_cached_property('ToolTip');
+        if (toolTipVariant) {
+            try {
+                const toolTip = toolTipVariant.deep_unpack();
+                // ToolTip is (sa(iiay)ss): icon_name, icon_pixmap, title, description
+                if (toolTip && toolTip.length >= 3 && toolTip[2] && toolTip[2].length > 0) {
+                    newAppId = toolTip[2];
+                    debug(`Got app ID from ToolTip title: ${newAppId}`);
+                }
+            } catch (e) {
+                debug(`Failed to parse ToolTip: ${e.message}`);
+            }
+        }
+
+        // Try Flatpak app ID from IconThemePath
+        if (!newAppId && this._iconThemePath) {
+            const flatpakId = extractFlatpakAppId(this._iconThemePath);
+            if (flatpakId) {
+                newAppId = flatpakId;
+                debug(`Got app ID from Flatpak IconThemePath: ${newAppId}`);
+            }
+        }
+
+        // Try SNI Id (but skip generic chrome_status_icon_* names)
+        if (!newAppId) {
+            const idVariant = this._proxy.get_cached_property('Id');
+            if (idVariant) {
+                const sniId = idVariant.deep_unpack();
+                if (sniId && sniId.length > 0 && !sniId.startsWith(':') && !sniId.startsWith('chrome_status_icon_')) {
+                    newAppId = sniId;
+                    debug(`Got app ID from SNI Id: ${newAppId}`);
+                }
+            }
+        }
+
+        if (newAppId && newAppId !== oldAppId) {
+            this._appId = newAppId;
+            debug(`Updated appId from ${oldAppId} to ${this._appId}`);
+            this.emit('appid-resolved', this._appId);
+        }
     }
 
     /**
@@ -583,10 +638,94 @@ const TrayItem = GObject.registerClass({
     }
 
     /**
-     * Fetch SNI Id property directly via D-Bus (for fallback mode)
-     * Updates _appId with stable identifier
+     * Fetch SNI Id and related properties directly via D-Bus (for fallback mode)
+     * Updates _appId with stable identifier using same priority as proxy mode
      */
     _fetchIdDirect() {
+        const bus = Gio.DBus.session;
+
+        // Fetch ToolTip first (highest priority for Electron apps)
+        bus.call(
+            this._busName,
+            this._objectPath,
+            'org.freedesktop.DBus.Properties',
+            'Get',
+            new GLib.Variant('(ss)', ['org.kde.StatusNotifierItem', 'ToolTip']),
+            new GLib.VariantType('(v)'),
+            Gio.DBusCallFlags.NONE,
+            -1,
+            this._cancellable,
+            (conn, result) => {
+                try {
+                    const reply = conn.call_finish(result);
+                    const [variant] = reply.deep_unpack();
+                    const toolTip = variant.deep_unpack();
+                    // ToolTip is (sa(iiay)ss): icon_name, icon_pixmap, title, description
+                    if (toolTip && toolTip.length >= 3 && toolTip[2] && toolTip[2].length > 0) {
+                        const oldAppId = this._appId;
+                        this._appId = toolTip[2];
+                        debug(`Updated appId from ${oldAppId} to ${this._appId} (from ToolTip, fallback)`);
+                        this.emit('appid-resolved', this._appId);
+                        return; // ToolTip found, no need to try other sources
+                    }
+                } catch (e) {
+                    if (!e.message?.includes('CANCELLED')) {
+                        debug(`Failed to get ToolTip (fallback): ${e.message}`);
+                    }
+                }
+                // ToolTip not available, try IconThemePath for Flatpak ID
+                this._fetchIdFromIconThemePathDirect();
+            }
+        );
+    }
+
+    /**
+     * Try to extract app ID from IconThemePath (for Flatpak apps)
+     */
+    _fetchIdFromIconThemePathDirect() {
+        const bus = Gio.DBus.session;
+
+        bus.call(
+            this._busName,
+            this._objectPath,
+            'org.freedesktop.DBus.Properties',
+            'Get',
+            new GLib.Variant('(ss)', ['org.kde.StatusNotifierItem', 'IconThemePath']),
+            new GLib.VariantType('(v)'),
+            Gio.DBusCallFlags.NONE,
+            -1,
+            this._cancellable,
+            (conn, result) => {
+                try {
+                    const reply = conn.call_finish(result);
+                    const [variant] = reply.deep_unpack();
+                    const iconThemePath = variant.deep_unpack();
+                    if (iconThemePath) {
+                        this._iconThemePath = iconThemePath;
+                        const flatpakId = extractFlatpakAppId(iconThemePath);
+                        if (flatpakId) {
+                            const oldAppId = this._appId;
+                            this._appId = flatpakId;
+                            debug(`Updated appId from ${oldAppId} to ${this._appId} (from Flatpak path, fallback)`);
+                            this.emit('appid-resolved', this._appId);
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    if (!e.message?.includes('CANCELLED')) {
+                        debug(`Failed to get IconThemePath (fallback): ${e.message}`);
+                    }
+                }
+                // No Flatpak ID, try SNI Id as last resort
+                this._fetchSniIdDirect();
+            }
+        );
+    }
+
+    /**
+     * Fetch SNI Id property as last resort (skips generic chrome_status_icon_*)
+     */
+    _fetchSniIdDirect() {
         const bus = Gio.DBus.session;
 
         bus.call(
@@ -604,11 +743,10 @@ const TrayItem = GObject.registerClass({
                     const reply = conn.call_finish(result);
                     const [variant] = reply.deep_unpack();
                     const sniId = variant.deep_unpack();
-                    if (sniId && sniId.length > 0 && !sniId.startsWith(':')) {
+                    if (sniId && sniId.length > 0 && !sniId.startsWith(':') && !sniId.startsWith('chrome_status_icon_')) {
                         const oldAppId = this._appId;
                         this._appId = sniId;
                         debug(`Updated appId from ${oldAppId} to ${this._appId} (from SNI Id, fallback)`);
-                        // Notify extension that appId was resolved (for settings persistence)
                         this.emit('appid-resolved', this._appId);
                     }
                 } catch (e) {

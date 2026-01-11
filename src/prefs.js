@@ -56,6 +56,17 @@ function cleanAppName(name) {
 }
 
 /**
+ * Extract Flatpak app ID from IconThemePath
+ * Flatpak apps have paths like: /run/user/1000/app/org.ferdium.Ferdium/.org.chromium.Chromium.xxx
+ * Returns the app ID (e.g., "org.ferdium.Ferdium") or null if not a Flatpak path
+ */
+function extractFlatpakAppId(iconThemePath) {
+    if (!iconThemePath) return null;
+    const match = iconThemePath.match(/\/run\/user\/\d+\/app\/([^/]+)/);
+    return match ? match[1] : null;
+}
+
+/**
  * AppRow - A row representing a single tray app with enable/disable toggle
  * and icon override button. Supports drag-and-drop reordering.
  */
@@ -260,15 +271,6 @@ class AppRow extends Adw.ActionRow {
             const iconName = iconNameReply ? iconNameReply.deep_unpack() : null;
             this._iconThemePath = iconThemePathReply ? iconThemePathReply.deep_unpack() : null;
 
-            // Update appId with stable SNI Id property
-            // This ensures settings persist across app restarts (bus names like :1.123 change)
-            if (id && id.length > 0 && !id.startsWith(':')) {
-                const oldAppId = this._appId;
-                this._appId = id;
-                this.set_subtitle(id);  // Update subtitle to show stable ID
-                debug(`Updated appId from ${oldAppId} to ${this._appId} (from SNI Id)`);
-            }
-
             // Extract tooltip title - ToolTip is (sa(iiay)ss): icon_name, icon_pixmap, title, description
             let toolTipTitle = null;
             if (toolTipReply) {
@@ -281,6 +283,36 @@ class AppRow extends Adw.ActionRow {
                 } catch (e) {
                     debug(`Failed to parse ToolTip: ${e.message}`);
                 }
+            }
+
+            // Resolve app ID using priority order (same as extension.js):
+            // 1. ToolTip title (best for Electron apps like Ferdium, Bitwarden)
+            // 2. Flatpak app ID from IconThemePath
+            // 3. SNI Id (if not generic chrome_status_icon_*)
+            // 4. Keep existing fallback from object path
+            const oldAppId = this._appId;
+            let newAppId = null;
+
+            if (toolTipTitle && toolTipTitle.length > 0) {
+                newAppId = toolTipTitle;
+                debug(`Got app ID from ToolTip title: ${newAppId}`);
+            } else if (this._iconThemePath) {
+                const flatpakId = extractFlatpakAppId(this._iconThemePath);
+                if (flatpakId) {
+                    newAppId = flatpakId;
+                    debug(`Got app ID from Flatpak IconThemePath: ${newAppId}`);
+                }
+            }
+
+            if (!newAppId && id && id.length > 0 && !id.startsWith(':') && !id.startsWith('chrome_status_icon_')) {
+                newAppId = id;
+                debug(`Got app ID from SNI Id: ${newAppId}`);
+            }
+
+            if (newAppId && newAppId !== oldAppId) {
+                this._appId = newAppId;
+                this.set_subtitle(newAppId);  // Update subtitle to show stable ID
+                debug(`Updated appId from ${oldAppId} to ${this._appId}`);
             }
 
             // Determine display name
@@ -1613,7 +1645,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         const versionRow = new Adw.ActionRow({
             title: 'Version',
-            subtitle: `${this.metadata.version}`,
+            subtitle: this.metadata['version-name'] ?? `${this.metadata.version}`,
         });
         aboutGroup.add(versionRow);
 
