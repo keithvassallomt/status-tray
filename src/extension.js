@@ -1319,13 +1319,8 @@ const TrayItem = GObject.registerClass({
 
         // Clean up signal subscriptions
         const bus = Gio.DBus.session;
-        for (const signalId of this._signalIds) {
-            try {
-                bus.signal_unsubscribe(signalId);
-            } catch (e) {
-                // Ignore cleanup errors
-            }
-        }
+        for (const signalId of this._signalIds)
+            bus.signal_unsubscribe(signalId);
         this._signalIds = [];
 
         // Clean up proxy
@@ -1664,12 +1659,8 @@ class StatusNotifierWatcher {
         } catch (e) {
         }
 
-        for (const signalId of this._nameOwnerChangedIds.values()) {
-            try {
-                Gio.DBus.session.signal_unsubscribe(signalId);
-            } catch (e) {
-            }
-        }
+        for (const signalId of this._nameOwnerChangedIds.values())
+            Gio.DBus.session.signal_unsubscribe(signalId);
         this._nameOwnerChangedIds.clear();
 
         if (this._ownNameId) {
@@ -1677,10 +1668,7 @@ class StatusNotifierWatcher {
             this._ownNameId = 0;
         }
 
-        try {
-            this._dbusImpl.unexport();
-        } catch (e) {
-        }
+        this._dbusImpl.unexport();
 
         this._items.clear();
     }
@@ -1702,41 +1690,28 @@ export default class StatusTrayExtension extends Extension {
 
         this._reorderTimeoutId = null;
 
-        this._settingsConnections = [];
-
-        this._settingsConnections.push(
-            this._settings.connect('changed::disabled-apps', () => {
+        this._settings.connectObject(
+            'changed::disabled-apps', () => {
                 debug('disabled-apps setting changed');
                 this._refreshItems();
-            })
-        );
-
-        this._settingsConnections.push(
-            this._settings.connect('changed::icon-mode', () => {
+            },
+            'changed::icon-mode', () => {
                 debug('icon-mode setting changed');
                 this._refreshIconStyles();
-            })
-        );
-
-        this._settingsConnections.push(
-            this._settings.connect('changed::icon-overrides', () => {
+            },
+            'changed::icon-overrides', () => {
                 debug('icon-overrides setting changed');
                 this._refreshIcons();
-            })
-        );
-
-        this._settingsConnections.push(
-            this._settings.connect('changed::icon-effect-overrides', () => {
+            },
+            'changed::icon-effect-overrides', () => {
                 debug('icon-effect-overrides setting changed');
                 this._refreshIconStyles();
-            })
-        );
-
-        this._settingsConnections.push(
-            this._settings.connect('changed::app-order', () => {
+            },
+            'changed::app-order', () => {
                 debug('app-order setting changed');
                 this._reorderItems();
-            })
+            },
+            this
         );
 
         this._watcher = new StatusNotifierWatcher(this);
@@ -1757,16 +1732,17 @@ export default class StatusTrayExtension extends Extension {
             this._reorderTimeoutId = null;
         }
 
-        for (const id of this._settingsConnections) {
-            this._settings.disconnect(id);
-        }
-        this._settingsConnections = [];
+        this._settings.disconnectObject(this);
         this._settings = null;
 
         for (const [key, item] of this._items) {
             item.destroy();
         }
         this._items.clear();
+
+        // Clean up module-level cached objects
+        _sniInterfaceInfo = null;
+        _interfaceSettings = null;
 
         debug('Extension disabled');
     }
@@ -1801,17 +1777,9 @@ export default class StatusTrayExtension extends Extension {
         this._items.set(uniqueId, trayItem);
 
         trayItem.connect('appid-resolved', (item, resolvedAppId) => {
-            if (this._watcher) {
+            if (this._watcher)
                 this._watcher.updateItemAppId(uniqueId, resolvedAppId);
-            }
-            if (this._reorderTimeoutId) {
-                GLib.source_remove(this._reorderTimeoutId);
-            }
-            this._reorderTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                this._reorderTimeoutId = null;
-                this._reorderItems();
-                return GLib.SOURCE_REMOVE;
-            });
+            this._scheduleReorder();
         });
 
         const appId = storedAppId || extractedAppId;
@@ -1866,16 +1834,8 @@ export default class StatusTrayExtension extends Extension {
             }
         }
 
-        if (itemsAdded) {
-            if (this._reorderTimeoutId) {
-                GLib.source_remove(this._reorderTimeoutId);
-            }
-            this._reorderTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                this._reorderTimeoutId = null;
-                this._reorderItems();
-                return GLib.SOURCE_REMOVE;
-            });
-        }
+        if (itemsAdded)
+            this._scheduleReorder();
     }
 
     /**
@@ -1894,6 +1854,20 @@ export default class StatusTrayExtension extends Extension {
         for (const [key, item] of this._items) {
             item._updateIcon();
         }
+    }
+
+    /**
+     * Schedule a debounced reorder of tray items
+     */
+    _scheduleReorder() {
+        if (this._reorderTimeoutId)
+            GLib.source_remove(this._reorderTimeoutId);
+
+        this._reorderTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            this._reorderTimeoutId = null;
+            this._reorderItems();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     /**

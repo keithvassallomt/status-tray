@@ -22,10 +22,8 @@ import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/
 // Debug logging
 const DEBUG = false;
 function debug(msg) {
-    if (DEBUG) {
+    if (DEBUG)
         console.log(`[StatusTray/prefs] ${msg}`);
-        log(`[StatusTray/prefs] ${msg}`);
-    }
 }
 
 // Module-level variable to track the currently dragged row
@@ -1629,17 +1627,10 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             title: 'Status Tray',
             subtitle: 'Automatic system tray for StatusNotifierItem apps',
         });
-        // Load extension icon from assets folder
-        const iconPath = GLib.build_filenamev([this.path, 'assets', 'status-tray-dark.png']);
-        const iconFile = Gio.File.new_for_path(iconPath);
         const aboutIcon = new Gtk.Image({
+            icon_name: 'preferences-system-symbolic',
             pixel_size: 48,
         });
-        if (iconFile.query_exists(null)) {
-            aboutIcon.set_from_gicon(Gio.FileIcon.new(iconFile));
-        } else {
-            aboutIcon.set_from_icon_name('application-x-executable-symbolic');
-        }
         aboutRow.add_prefix(aboutIcon);
         aboutGroup.add(aboutRow);
 
@@ -1960,15 +1951,19 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         debug('Cleaning up preferences window');
 
         // Unsubscribe from D-Bus signals
-        for (const signalId of this._signalIds) {
-            try {
-                this._bus.signal_unsubscribe(signalId);
-            } catch (e) {
-                // Ignore cleanup errors
-            }
-        }
-        this._signalIds = [];
+        for (const signalId of this._signalIds)
+            this._bus.signal_unsubscribe(signalId);
 
-        this._appRows.clear();
+        // Nullify all properties
+        this._signalIds = null;
+        this._appRows = null;
+        this._appsGroup = null;
+        this._infoRow = null;
+        this._bus = null;
+        this._settings = null;
+        this._window = null;
+
+        // Clean up module-level state
+        _draggedRow = null;
     }
 }
