@@ -39,8 +39,7 @@ A GNOME Shell extension that brings back the system tray for applications using 
 
 ### From extensions.gnome.org (Recommended)
 
-<!-- TODO: Add link once published -->
-Visit the [Status Tray extension page](https://extensions.gnome.org/) and click "Install".
+[![Get it on GNOME Extensions](assets/get-it-on-ego.svg)](https://extensions.gnome.org/extension/9164/status-tray/)
 
 ### Manual Installation
 
