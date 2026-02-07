@@ -784,6 +784,9 @@ const TrayItem = GObject.registerClass({
         debug(`_setIcon called with: ${iconName}, themePath: ${this._iconThemePath}`);
 
         this._icon.content = null;
+        this._icon.gicon = null;
+        this._icon.icon_name = null;
+        this._icon.set_size(-1, -1);
 
         if (iconName.startsWith('/')) {
             const file = Gio.File.new_for_path(iconName);
@@ -1015,6 +1018,7 @@ const TrayItem = GObject.registerClass({
                 });
 
                 this._icon.gicon = null;
+                this._icon.icon_name = null;
 
                 this._applySymbolicStyle();
                 debug(`Set IconPixmap via St.ImageContent for ${this._busName}`);
@@ -1053,7 +1057,8 @@ const TrayItem = GObject.registerClass({
             const file = Gio.File.new_for_path(tempPath);
             const gicon = new Gio.FileIcon({ file });
             this._icon.set_gicon(gicon);
-            this._icon.content = null;  // Clear any St.ImageContent
+            this._icon.content = null;
+            this._icon.icon_name = null;
             this._applySymbolicStyle();
 
             debug(`IconPixmap saved to ${tempPath} (fallback)`);
