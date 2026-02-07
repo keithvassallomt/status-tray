@@ -1,14 +1,3 @@
-/**
- * Status Tray - Preferences UI
- *
- * GNOME 45+ libadwaita-based settings panel.
- * Allows users to:
- * - Toggle icon mode (symbolic/original)
- * - Enable/disable specific apps from the tray
- * - Override icons per-app
- * - Live updates when apps register/unregister
- */
-
 import Adw from 'gi://Adw';
 import Gdk from 'gi://Gdk';
 import GdkPixbuf from 'gi://GdkPixbuf';
@@ -19,33 +8,24 @@ import Gtk from 'gi://Gtk';
 
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-// Debug logging
 const DEBUG = false;
 function debug(msg) {
     if (DEBUG)
         console.log(`[StatusTray/prefs] ${msg}`);
 }
 
-// Module-level variable to track the currently dragged row
-// GTK4 DnD with custom GObject types is unreliable, so we use this workaround
+// GTK4 DnD with custom GObject types is unreliable, so we track the dragged
+// row at module level as a workaround.
 let _draggedRow = null;
 
-/**
- * Clean up an app name for display
- * - Strips status suffixes (e.g., "Nextcloud - Synced" -> "Nextcloud")
- * - Capitalizes first letter
- * - Converts underscores/hyphens to spaces
- */
 function cleanAppName(name) {
     if (!name) return null;
 
-    // Strip common status suffixes
     let cleaned = name
         .replace(/\s*[-–—]\s*(Synced|Syncing|Paused|Error|Offline|Online|Connected|Disconnected).*$/i, '')
-        .replace(/\s*\([^)]*\)\s*$/, '')  // Remove trailing parenthetical
+        .replace(/\s*\([^)]*\)\s*$/, '')
         .trim();
 
-    // Convert underscores and hyphens to spaces, then capitalize words
     cleaned = cleaned
         .replace(/[_-]+/g, ' ')
         .replace(/\b\w/g, c => c.toUpperCase());
@@ -53,21 +33,12 @@ function cleanAppName(name) {
     return cleaned || null;
 }
 
-/**
- * Extract Flatpak app ID from IconThemePath
- * Flatpak apps have paths like: /run/user/1000/app/org.ferdium.Ferdium/.org.chromium.Chromium.xxx
- * Returns the app ID (e.g., "org.ferdium.Ferdium") or null if not a Flatpak path
- */
 function extractFlatpakAppId(iconThemePath) {
     if (!iconThemePath) return null;
     const match = iconThemePath.match(/\/run\/user\/\d+\/app\/([^/]+)/);
     return match ? match[1] : null;
 }
 
-/**
- * AppRow - A row representing a single tray app with enable/disable toggle
- * and icon override button. Supports drag-and-drop reordering.
- */
 const AppRow = GObject.registerClass(
 class AppRow extends Adw.ActionRow {
     _init(appId, busName, objectPath, settings, window, onReorder) {
@@ -81,13 +52,11 @@ class AppRow extends Adw.ActionRow {
         this._objectPath = objectPath;
         this._settings = settings;
         this._window = window;
-        this._onReorder = onReorder;  // Callback for reorder events
-        this._displayName = appId;  // Track for dialog title
-        this._currentIconName = null;  // The app's actual icon (for reset)
-        this._iconThemePath = null;  // For Electron apps
-        this._resolvedIconSource = null;  // The actual icon path/name used for display (for effect dialog)
+        this._onReorder = onReorder;
+        this._displayName = appId;
+        this._currentIconName = null;
+        this._iconThemePath = null;
 
-        // Drag handle (prefix) - visual indicator that row is draggable
         this._dragHandle = new Gtk.Image({
             icon_name: 'list-drag-handle-symbolic',
             pixel_size: 16,
@@ -96,7 +65,6 @@ class AppRow extends Adw.ActionRow {
         });
         this.add_prefix(this._dragHandle);
 
-        // Icon button (prefix) - shows current icon, clickable for override
         this._iconButton = new Gtk.Button({
             valign: Gtk.Align.CENTER,
             css_classes: ['flat', 'circular'],
@@ -110,22 +78,18 @@ class AppRow extends Adw.ActionRow {
         this._iconButton.connect('clicked', () => this._openIconPicker());
         this.add_prefix(this._iconButton);
 
-        // Create toggle switch (suffix)
         this._switch = new Gtk.Switch({
             active: true,
             valign: Gtk.Align.CENTER,
         });
 
-        // Check if this app is disabled
         const disabledApps = this._settings.get_strv('disabled-apps');
         this._switch.set_active(!disabledApps.includes(appId));
 
-        // Connect switch toggle
         this._switch.connect('notify::active', () => {
             this._onToggled();
         });
 
-        // Effect tune button (suffix, left of switch) - opens effect customization dialog
         this._tuneButton = new Gtk.Button({
             valign: Gtk.Align.CENTER,
             css_classes: ['flat', 'circular'],
@@ -141,22 +105,13 @@ class AppRow extends Adw.ActionRow {
         this.add_suffix(this._switch);
         this.set_activatable_widget(this._switch);
 
-        // Set up drag-and-drop
         this._setupDragAndDrop();
-
-        // Fetch display name and icon asynchronously
         this._fetchAppInfo();
     }
 
-    /**
-     * Set up drag source and drop target for reordering
-     * Uses a module-level variable to pass the dragged row reference
-     * (GTK4 DnD with custom GObject types from GJS is unreliable)
-     */
     _setupDragAndDrop() {
         debug(`[DnD] Setting up for ${this._appId}`);
 
-        // Create drag source
         const dragSource = new Gtk.DragSource({
             actions: Gdk.DragAction.MOVE,
         });
@@ -189,7 +144,6 @@ class AppRow extends Adw.ActionRow {
 
         this.add_controller(dragSource);
 
-        // Create drop target that accepts strings
         debug(`[DnD] Creating DropTarget for ${this._appId}`);
         const dropTarget = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE);
 
@@ -242,10 +196,6 @@ class AppRow extends Adw.ActionRow {
         return this._appId;
     }
 
-    /**
-     * Fetch Id, Title, IconName, IconThemePath, and IconPixmap from the SNI
-     * This mirrors what extension.js does for displaying tray icons
-     */
     async _fetchAppInfo() {
         if (!this._busName || !this._objectPath) {
             debug(`No bus info for ${this._appId}, skipping SNI fetch`);
@@ -255,7 +205,6 @@ class AppRow extends Adw.ActionRow {
         this._bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
 
         try {
-            // Fetch all properties we need in parallel
             const [idReply, titleReply, iconNameReply, iconThemePathReply, toolTipReply] = await Promise.all([
                 this._dbusGetProperty(this._bus, 'Id'),
                 this._dbusGetProperty(this._bus, 'Title'),
@@ -313,9 +262,7 @@ class AppRow extends Adw.ActionRow {
                 debug(`Updated appId from ${oldAppId} to ${this._appId}`);
             }
 
-            // Determine display name
-            // Priority: Title > ToolTip title > Id
-            // (Electron apps often have empty Title but good ToolTip)
+            // Display name priority: Title > ToolTip title > Id
             if (title && title.length > 0) {
                 this._displayName = cleanAppName(title) || this._appId;
             } else if (toolTipTitle && toolTipTitle.length > 0) {
@@ -327,17 +274,13 @@ class AppRow extends Adw.ActionRow {
                 }
             }
 
-            // Update UI with display name
-            // Always set title since initial value may have been ephemeral bus name
             this.set_title(this._displayName);
             debug(`Display name for ${this._appId}: ${this._displayName}`);
 
-            // Store the app's actual icon name for reset functionality
             if (iconName && iconName.length > 0) {
                 this._currentIconName = iconName;
             }
 
-            // Update icon - check for override first, then use app icon
             this._updateIcon();
 
         } catch (e) {
@@ -345,41 +288,29 @@ class AppRow extends Adw.ActionRow {
         }
     }
 
-    /**
-     * Update the icon display - respects overrides, handles IconThemePath
-     * Mirrors the logic from extension.js TrayItem._setIcon()
-     */
     _updateIcon() {
-        // Check for icon override first
         const overrides = this._settings.get_value('icon-overrides').deep_unpack();
         const overrideIcon = overrides[this._appId];
 
         if (overrideIcon) {
-            // Use override
             if (overrideIcon.startsWith('/')) {
-                // File path
                 this._setIconFromPath(overrideIcon);
             } else {
                 this._iconImage.set_from_icon_name(overrideIcon);
-                this._resolvedIconSource = overrideIcon;
             }
             return;
         }
 
-        // No override - use app's icon
         if (!this._currentIconName) {
-            // No icon name - try IconPixmap
             this._fetchIconPixmap();
             return;
         }
 
-        // Check if it's already a file path
         if (this._currentIconName.startsWith('/')) {
             this._setIconFromPath(this._currentIconName);
             return;
         }
 
-        // For Electron/Chromium apps, check IconThemePath for the actual file
         if (this._iconThemePath && this._iconThemePath.length > 0) {
             const possiblePaths = [
                 `${this._iconThemePath}/${this._currentIconName}.png`,
@@ -399,8 +330,6 @@ class AppRow extends Adw.ActionRow {
             }
         }
 
-        // Check if icon exists in the current theme before using it
-        // Try to get display from button, fall back to default display
         let iconTheme;
         try {
             const display = this._iconButton.get_display();
@@ -412,7 +341,6 @@ class AppRow extends Adw.ActionRow {
         }
 
         if (!iconTheme) {
-            // Fall back to default display
             const defaultDisplay = Gdk.Display.get_default();
             if (defaultDisplay) {
                 iconTheme = Gtk.IconTheme.get_for_display(defaultDisplay);
@@ -421,19 +349,13 @@ class AppRow extends Adw.ActionRow {
 
         if (iconTheme && iconTheme.has_icon(this._currentIconName)) {
             this._iconImage.set_from_icon_name(this._currentIconName);
-            this._resolvedIconSource = this._currentIconName;
             return;
         }
 
-        // Icon name not found in theme - try IconPixmap as fallback
         debug(`Icon ${this._currentIconName} not in theme, trying IconPixmap`);
         this._fetchIconPixmap();
     }
 
-    /**
-     * Fetch IconPixmap from the SNI and display it
-     * This is used when IconName isn't available or isn't in the theme
-     */
     async _fetchIconPixmap() {
         if (!this._bus || !this._busName || !this._objectPath) {
             this._iconImage.set_from_icon_name('application-x-executable-symbolic');
@@ -455,7 +377,6 @@ class AppRow extends Adw.ActionRow {
                 return;
             }
 
-            // Pick the best size - prefer something close to 24px
             let bestPixmap = pixmaps[0];
             let bestSize = bestPixmap[0];
             const targetSize = 24;
@@ -476,7 +397,6 @@ class AppRow extends Adw.ActionRow {
 
             debug(`Using IconPixmap ${width}x${height} for ${this._appId}`);
 
-            // Convert ARGB to RGBA and create a pixbuf
             const rgbaData = this._argbToRgba(pixelData, width, height);
             const pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
                 rgbaData,
@@ -488,7 +408,6 @@ class AppRow extends Adw.ActionRow {
                 width * 4  // rowstride
             );
 
-            // Save to temp file and use as icon
             const tempPath = GLib.build_filenamev([
                 GLib.get_tmp_dir(),
                 `status-tray-prefs-${this._appId.replace(/[^a-zA-Z0-9]/g, '_')}.png`
@@ -503,11 +422,7 @@ class AppRow extends Adw.ActionRow {
         }
     }
 
-    /**
-     * Convert ARGB pixel data (network byte order) to RGBA
-     * IconPixmap uses big-endian ARGB: each pixel is [A, R, G, B]
-     * GdkPixbuf wants RGBA: each pixel is [R, G, B, A]
-     */
+    // IconPixmap uses big-endian ARGB, GdkPixbuf wants RGBA
     _argbToRgba(argbData, width, height) {
         const pixels = width * height;
         const rgba = new Uint8Array(pixels * 4);
@@ -516,7 +431,6 @@ class AppRow extends Adw.ActionRow {
             const srcOffset = i * 4;
             const dstOffset = i * 4;
 
-            // ARGB (big-endian) -> RGBA
             const a = argbData[srcOffset];
             const r = argbData[srcOffset + 1];
             const g = argbData[srcOffset + 2];
@@ -536,10 +450,8 @@ class AppRow extends Adw.ActionRow {
         if (file.query_exists(null)) {
             const gicon = Gio.FileIcon.new(file);
             this._iconImage.set_from_gicon(gicon);
-            this._resolvedIconSource = path;  // Track for effect dialog
         } else {
             this._iconImage.set_from_icon_name('application-x-executable-symbolic');
-            this._resolvedIconSource = null;
         }
     }
 
@@ -561,7 +473,7 @@ class AppRow extends Adw.ActionRow {
                         const [variant] = reply.deep_unpack();
                         resolve(variant);
                     } catch (e) {
-                        resolve(null);  // Property not available, that's ok
+                        resolve(null);
                     }
                 }
             );
@@ -573,13 +485,11 @@ class AppRow extends Adw.ActionRow {
         const isEnabled = this._switch.get_active();
 
         if (isEnabled) {
-            // Remove from disabled list
             const index = disabledApps.indexOf(this._appId);
             if (index > -1) {
                 disabledApps.splice(index, 1);
             }
         } else {
-            // Add to disabled list
             if (!disabledApps.includes(this._appId)) {
                 disabledApps.push(this._appId);
             }
@@ -589,7 +499,6 @@ class AppRow extends Adw.ActionRow {
     }
 
     _openIconPicker() {
-        // Pass the display name for the dialog title
         const dialog = new IconPickerDialog(
             this._appId,
             this._displayName,
@@ -598,14 +507,12 @@ class AppRow extends Adw.ActionRow {
             this._window
         );
         dialog.connect('icon-selected', (dlg, iconName) => {
-            // Update our icon display (iconName may be null for reset)
             this._updateIcon();
         });
         dialog.present(this._window);
     }
 
     _openEffectDialog() {
-        // Pass bus info so the dialog can fetch the icon fresh from D-Bus
         const dialog = new IconEffectDialog(
             this._appId,
             this._displayName,
@@ -618,9 +525,6 @@ class AppRow extends Adw.ActionRow {
     }
 });
 
-/**
- * IconPickerDialog - Dialog for selecting an icon override
- */
 const IconPickerDialog = GObject.registerClass({
     Signals: {
         'icon-selected': { param_types: [GObject.TYPE_STRING] },
@@ -639,18 +543,14 @@ const IconPickerDialog = GObject.registerClass({
         this._parentWindow = parentWindow;
         this._allIcons = [];  // Cache of discovered icons
 
-        // Main content with toolbar view for proper header
         const toolbarView = new Adw.ToolbarView();
         this.set_child(toolbarView);
 
-        // Header bar
-        const headerBar = new Adw.HeaderBar({
+        toolbarView.add_top_bar(new Adw.HeaderBar({
             show_end_title_buttons: true,
             show_start_title_buttons: false,
-        });
-        toolbarView.add_top_bar(headerBar);
+        }));
 
-        // Content box
         const content = new Gtk.Box({
             orientation: Gtk.Orientation.VERTICAL,
             spacing: 12,
@@ -661,7 +561,6 @@ const IconPickerDialog = GObject.registerClass({
         });
         toolbarView.set_content(content);
 
-        // Current icon preview
         const previewGroup = new Adw.PreferencesGroup({
             title: 'Current Icon',
         });
@@ -683,21 +582,37 @@ const IconPickerDialog = GObject.registerClass({
         previewGroup.add(previewRow);
         this._previewRow = previewRow;
 
-        // Search and filter row
+        const fallbackApps = settings.get_strv('icon-fallback-overrides');
+        this._fallbackRow = new Adw.SwitchRow({
+            title: 'Use as Fallback Only',
+            subtitle: 'Only apply when the app sends a low-quality icon or no icon',
+        });
+        this._fallbackRow.set_active(fallbackApps.includes(appId));
+        previewGroup.add(this._fallbackRow);
+
+        this._fallbackRow.connect('notify::active', () => {
+            const apps = this._settings.get_strv('icon-fallback-overrides');
+            const index = apps.indexOf(this._appId);
+            if (this._fallbackRow.get_active() && index === -1) {
+                apps.push(this._appId);
+            } else if (!this._fallbackRow.get_active() && index > -1) {
+                apps.splice(index, 1);
+            }
+            this._settings.set_strv('icon-fallback-overrides', apps);
+        });
+
         const filterBox = new Gtk.Box({
             orientation: Gtk.Orientation.HORIZONTAL,
             spacing: 8,
         });
         content.append(filterBox);
 
-        // Search entry
         const searchEntry = new Gtk.SearchEntry({
             placeholder_text: 'Search icons...',
             hexpand: true,
         });
         filterBox.append(searchEntry);
 
-        // Category dropdown
         const categoryModel = new Gtk.StringList();
         categoryModel.append('Symbolic');
         categoryModel.append('Applications');
@@ -709,7 +624,6 @@ const IconPickerDialog = GObject.registerClass({
         });
         filterBox.append(this._categoryDropdown);
 
-        // Scrolled window for icon grid
         const scrolled = new Gtk.ScrolledWindow({
             hscrollbar_policy: Gtk.PolicyType.NEVER,
             vscrollbar_policy: Gtk.PolicyType.AUTOMATIC,
@@ -718,7 +632,6 @@ const IconPickerDialog = GObject.registerClass({
         });
         content.append(scrolled);
 
-        // Icon grid
         this._iconGrid = new Gtk.FlowBox({
             homogeneous: true,
             max_children_per_line: 8,
@@ -729,26 +642,18 @@ const IconPickerDialog = GObject.registerClass({
         });
         scrolled.set_child(this._iconGrid);
 
-        // Load all icons from the theme
         this._loadAllIcons();
-
-        // Store search entry reference for use in callbacks
         this._searchEntry = searchEntry;
-
-        // Populate with initial icons
         this._populateIconGrid('', 0);
 
-        // Connect search
         searchEntry.connect('search-changed', () => {
             this._populateIconGrid(searchEntry.get_text(), this._categoryDropdown.selected);
         });
 
-        // Connect category dropdown
         this._categoryDropdown.connect('notify::selected', () => {
             this._populateIconGrid(searchEntry.get_text(), this._categoryDropdown.selected);
         });
 
-        // Handle icon selection
         this._iconGrid.connect('child-activated', (grid, child) => {
             const image = child.get_child();
             const iconName = image._iconName;
@@ -757,7 +662,6 @@ const IconPickerDialog = GObject.registerClass({
             }
         });
 
-        // Buttons row
         const buttonBox = new Gtk.Box({
             orientation: Gtk.Orientation.HORIZONTAL,
             spacing: 12,
@@ -766,14 +670,12 @@ const IconPickerDialog = GObject.registerClass({
         });
         content.append(buttonBox);
 
-        // Custom file button
         const fileButton = new Gtk.Button({
             label: 'Choose File...',
         });
         fileButton.connect('clicked', () => this._chooseFile());
         buttonBox.append(fileButton);
 
-        // Reset button
         const resetButton = new Gtk.Button({
             label: 'Reset to Default',
             css_classes: ['destructive-action'],
@@ -786,26 +688,19 @@ const IconPickerDialog = GObject.registerClass({
 
     _getIconDisplayName(iconPath) {
         if (iconPath.startsWith('/')) {
-            // Extract filename from path
             const parts = iconPath.split('/');
             return parts[parts.length - 1];
         }
         return iconPath;
     }
 
-    /**
-     * Load all available icons from the icon theme
-     */
     _loadAllIcons() {
         try {
             const iconTheme = Gtk.IconTheme.get_for_display(this.get_display());
 
-            // Get all icon names from the theme
-            // This returns thousands of icons - we'll filter in _populateIconGrid
             this._allIcons = iconTheme.get_icon_names();
             debug(`Loaded ${this._allIcons.length} icons from theme`);
 
-            // Sort alphabetically
             this._allIcons.sort((a, b) => a.localeCompare(b));
 
         } catch (e) {
@@ -814,13 +709,8 @@ const IconPickerDialog = GObject.registerClass({
         }
     }
 
-    /**
-     * Populate the icon grid based on search filter and category
-     * @param {string} filter - Search filter text
-     * @param {number} category - 0=Symbolic, 1=Applications, 2=All
-     */
+    // category: 0=Symbolic, 1=Applications, 2=All
     _populateIconGrid(filter, category = 0) {
-        // Clear existing children
         let child = this._iconGrid.get_first_child();
         while (child) {
             const next = child.get_next_sibling();
@@ -831,7 +721,6 @@ const IconPickerDialog = GObject.registerClass({
         const lowerFilter = filter.toLowerCase();
         let filteredIcons;
 
-        // Apply category filter first
         let categoryFiltered;
         switch (category) {
             case 0: // Symbolic icons
@@ -858,7 +747,6 @@ const IconPickerDialog = GObject.registerClass({
                 break;
         }
 
-        // Apply search filter
         if (filter.length === 0) {
             if (category === 0) {
                 // Symbolic: show common system icons by default
@@ -887,16 +775,12 @@ const IconPickerDialog = GObject.registerClass({
             filteredIcons = filteredIcons.slice(0, 150);
         }
 
-        // Add icons to grid
         for (const iconName of filteredIcons) {
             const image = new Gtk.Image({
                 icon_name: iconName,
                 pixel_size: 24,
             });
-            // Store icon name on the image for retrieval
             image._iconName = iconName;
-
-            // Tooltip with full icon name
             image.set_tooltip_text(iconName);
 
             const flowChild = new Gtk.FlowBoxChild();
@@ -904,7 +788,6 @@ const IconPickerDialog = GObject.registerClass({
             this._iconGrid.append(flowChild);
         }
 
-        // Show message if no results
         if (filteredIcons.length === 0) {
             let message;
             if (filter.length > 0 && filter.length < 2) {
@@ -927,17 +810,14 @@ const IconPickerDialog = GObject.registerClass({
     }
 
     _selectIcon(iconName) {
-        // Save override
         const overrides = this._settings.get_value('icon-overrides').deep_unpack();
         overrides[this._appId] = iconName;
         this._settings.set_value('icon-overrides', new GLib.Variant('a{ss}', overrides));
 
-        // Update preview
         this._previewImage.set_from_icon_name(iconName);
         this._previewRow.set_title(this._getIconDisplayName(iconName));
         this._previewRow.set_subtitle('Custom override');
 
-        // Emit signal and close
         this.emit('icon-selected', iconName);
         this.close();
     }
@@ -948,7 +828,6 @@ const IconPickerDialog = GObject.registerClass({
             modal: true,
         });
 
-        // File filter for images
         const filter = new Gtk.FileFilter();
         filter.set_name('Images');
         filter.add_mime_type('image/png');
@@ -972,28 +851,30 @@ const IconPickerDialog = GObject.registerClass({
     }
 
     _clearOverride() {
-        // Remove override
         const overrides = this._settings.get_value('icon-overrides').deep_unpack();
         delete overrides[this._appId];
         this._settings.set_value('icon-overrides', new GLib.Variant('a{ss}', overrides));
 
-        // Update preview to show app's default icon
+        const fallbackApps = this._settings.get_strv('icon-fallback-overrides');
+        const index = fallbackApps.indexOf(this._appId);
+        if (index > -1) {
+            fallbackApps.splice(index, 1);
+            this._settings.set_strv('icon-fallback-overrides', fallbackApps);
+        }
+
+        this._fallbackRow.set_active(false);
+        this._fallbackRow.set_visible(false);
+
         const defaultIcon = this._currentIconName || 'application-x-executable-symbolic';
         this._previewImage.set_from_icon_name(defaultIcon);
         this._previewRow.set_title('Default');
         this._previewRow.set_subtitle('Using app-provided icon');
 
-        // Emit signal (null means reset) and close
         this.emit('icon-selected', '');
         this.close();
     }
 });
 
-/**
- * IconEffectDialog - Dialog for customizing per-icon symbolic effect parameters
- * Allows users to tweak desaturation, brightness, contrast, and optional tint colour
- * Fetches icon fresh from D-Bus to show current state (including any dynamic overlays)
- */
 const IconEffectDialog = GObject.registerClass({
     Signals: {
         'effect-applied': {},
@@ -1012,21 +893,16 @@ const IconEffectDialog = GObject.registerClass({
         this._settings = settings;
         this._parentWindow = parentWindow;
 
-        // Load current override values or defaults
         this._loadCurrentValues();
 
-        // Main content with toolbar view
         const toolbarView = new Adw.ToolbarView();
         this.set_child(toolbarView);
 
-        // Header bar
-        const headerBar = new Adw.HeaderBar({
+        toolbarView.add_top_bar(new Adw.HeaderBar({
             show_end_title_buttons: true,
             show_start_title_buttons: false,
-        });
-        toolbarView.add_top_bar(headerBar);
+        }));
 
-        // Content box
         const content = new Gtk.Box({
             orientation: Gtk.Orientation.VERTICAL,
             spacing: 16,
@@ -1037,7 +913,6 @@ const IconEffectDialog = GObject.registerClass({
         });
         toolbarView.set_content(content);
 
-        // Preview section
         const previewFrame = new Gtk.Frame({
             halign: Gtk.Align.CENTER,
         });
@@ -1049,19 +924,15 @@ const IconEffectDialog = GObject.registerClass({
         });
         previewFrame.set_child(this._previewImage);
 
-        // Store original pixbuf for effect processing
         this._originalPixbuf = null;
 
-        // Fetch icon fresh from D-Bus
         this._fetchIconFromDbus();
 
-        // Sliders group
         const slidersGroup = new Adw.PreferencesGroup({
             title: 'Effect Parameters',
         });
         content.append(slidersGroup);
 
-        // Desaturation slider (0-1)
         this._desaturationRow = this._createSliderRow(
             'Desaturation',
             'Amount of colour removed (0 = full colour, 1 = grayscale)',
@@ -1070,7 +941,6 @@ const IconEffectDialog = GObject.registerClass({
         this._desaturationRow._slider.connect('value-changed', () => this._updatePreview());
         slidersGroup.add(this._desaturationRow);
 
-        // Brightness slider (-1 to 1)
         this._brightnessRow = this._createSliderRow(
             'Brightness',
             'Lighten or darken the icon',
@@ -1079,7 +949,6 @@ const IconEffectDialog = GObject.registerClass({
         this._brightnessRow._slider.connect('value-changed', () => this._updatePreview());
         slidersGroup.add(this._brightnessRow);
 
-        // Contrast slider (0-2)
         this._contrastRow = this._createSliderRow(
             'Contrast',
             'Increase or decrease contrast',
@@ -1088,13 +957,11 @@ const IconEffectDialog = GObject.registerClass({
         this._contrastRow._slider.connect('value-changed', () => this._updatePreview());
         slidersGroup.add(this._contrastRow);
 
-        // Tint section
         const tintGroup = new Adw.PreferencesGroup({
             title: 'Tint Colour',
         });
         content.append(tintGroup);
 
-        // Tint enable row with colour button
         const tintRow = new Adw.ActionRow({
             title: 'Custom Tint',
             subtitle: 'Apply a colour tint to the icon',
@@ -1109,7 +976,6 @@ const IconEffectDialog = GObject.registerClass({
             this._updatePreview();
         });
 
-        // Colour button
         this._colorButton = new Gtk.ColorButton({
             valign: Gtk.Align.CENTER,
             use_alpha: false,
@@ -1127,7 +993,6 @@ const IconEffectDialog = GObject.registerClass({
         tintRow.add_suffix(this._tintSwitch);
         tintGroup.add(tintRow);
 
-        // Buttons row
         const buttonBox = new Gtk.Box({
             orientation: Gtk.Orientation.HORIZONTAL,
             spacing: 12,
@@ -1136,7 +1001,6 @@ const IconEffectDialog = GObject.registerClass({
         });
         content.append(buttonBox);
 
-        // Reset button
         const resetButton = new Gtk.Button({
             label: 'Reset to Default',
             css_classes: ['destructive-action'],
@@ -1144,14 +1008,12 @@ const IconEffectDialog = GObject.registerClass({
         resetButton.connect('clicked', () => this._resetToDefault());
         buttonBox.append(resetButton);
 
-        // Cancel button
         const cancelButton = new Gtk.Button({
             label: 'Cancel',
         });
         cancelButton.connect('clicked', () => this.close());
         buttonBox.append(cancelButton);
 
-        // Apply button
         const applyButton = new Gtk.Button({
             label: 'Apply',
             css_classes: ['suggested-action'],
@@ -1159,12 +1021,10 @@ const IconEffectDialog = GObject.registerClass({
         applyButton.connect('clicked', () => this._applyChanges());
         buttonBox.append(applyButton);
 
-        // Initial preview update
         this._updatePreview();
     }
 
     _loadCurrentValues() {
-        // Detect if we're in dark mode to match tray defaults
         const styleManager = Adw.StyleManager.get_default();
         const isDark = styleManager.get_dark();
 
@@ -1175,7 +1035,6 @@ const IconEffectDialog = GObject.registerClass({
         this._useTint = false;
         this._tintColor = [1.0, 1.0, 1.0];
 
-        // Load from settings
         try {
             const overrides = this._settings.get_value('icon-effect-overrides').deep_unpack();
             const overrideJson = overrides[this._appId];
@@ -1192,10 +1051,6 @@ const IconEffectDialog = GObject.registerClass({
         }
     }
 
-    /**
-     * Fetch the icon fresh from D-Bus to show current state
-     * This ensures we see the actual icon including any dynamic overlays
-     */
     async _fetchIconFromDbus() {
         if (!this._busName) {
             debug(`No bus name for effect dialog, using fallback icon`);
@@ -1206,7 +1061,6 @@ const IconEffectDialog = GObject.registerClass({
         const bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
 
         try {
-            // First try IconPixmap (what Electron apps use)
             const pixmapReply = await this._dbusGetProperty(bus, 'IconPixmap');
             if (pixmapReply) {
                 const pixmaps = pixmapReply.deep_unpack();
@@ -1219,7 +1073,6 @@ const IconEffectDialog = GObject.registerClass({
                 }
             }
 
-            // Fall back to IconName
             const iconNameReply = await this._dbusGetProperty(bus, 'IconName');
             if (iconNameReply) {
                 const iconName = iconNameReply.deep_unpack();
@@ -1264,11 +1117,7 @@ const IconEffectDialog = GObject.registerClass({
         });
     }
 
-    /**
-     * Set preview icon from IconPixmap data
-     */
     _setIconFromPixmap(pixmaps) {
-        // Pick the best size - prefer something close to 64px for the preview
         let bestPixmap = pixmaps[0];
         let bestSize = bestPixmap[0];
         const targetSize = 64;
@@ -1287,7 +1136,6 @@ const IconEffectDialog = GObject.registerClass({
 
         debug(`IconEffectDialog: Using IconPixmap ${width}x${height}`);
 
-        // Convert ARGB to RGBA and create a pixbuf
         const rgbaData = this._argbToRgba(pixelData, width, height);
         const pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
             rgbaData,
@@ -1299,14 +1147,10 @@ const IconEffectDialog = GObject.registerClass({
             width * 4
         );
 
-        // Store original and update preview with effects
         this._originalPixbuf = pixbuf;
         this._updatePreview();
     }
 
-    /**
-     * Set preview icon from icon name (load as pixbuf from theme)
-     */
     _setIconFromName(iconName) {
         try {
             const iconTheme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default());
@@ -1334,13 +1178,9 @@ const IconEffectDialog = GObject.registerClass({
             debug(`IconEffectDialog: Failed to load icon from theme: ${e.message}`);
         }
 
-        // Fallback - just show the icon without effects
         this._previewImage.set_from_icon_name(iconName);
     }
 
-    /**
-     * Convert ARGB pixel data (network byte order) to RGBA
-     */
     _argbToRgba(argbData, width, height) {
         const pixels = width * height;
         const rgba = new Uint8Array(pixels * 4);
@@ -1401,7 +1241,6 @@ const IconEffectDialog = GObject.registerClass({
         box.append(label);
         row.add_suffix(box);
 
-        // Store slider reference on the row for easy access
         row._slider = slider;
         row._label = label;
 
@@ -1409,12 +1248,10 @@ const IconEffectDialog = GObject.registerClass({
     }
 
     _updatePreview() {
-        // If no original pixbuf yet, nothing to do
         if (!this._originalPixbuf) {
             return;
         }
 
-        // Get current slider values
         const desaturation = this._desaturationRow._slider.get_value();
         const brightness = this._brightnessRow._slider.get_value();
         const contrast = this._contrastRow._slider.get_value();
@@ -1431,10 +1268,8 @@ const IconEffectDialog = GObject.registerClass({
         const nChannels = srcPixbuf.get_n_channels();
         const srcPixels = srcPixbuf.get_pixels();
 
-        // Create new pixel data array
         const newPixels = new Uint8Array(srcPixels.length);
 
-        // Process each pixel
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
                 const offset = y * rowstride + x * nChannels;
@@ -1444,38 +1279,30 @@ const IconEffectDialog = GObject.registerClass({
                 let b = srcPixels[offset + 2];
                 const a = hasAlpha ? srcPixels[offset + 3] : 255;
 
-                // Step 1: Desaturate (convert to grayscale)
                 if (desaturation > 0) {
-                    // Use luminance formula for perceptual grayscale
                     const gray = 0.299 * r + 0.587 * g + 0.114 * b;
                     r = r + (gray - r) * desaturation;
                     g = g + (gray - g) * desaturation;
                     b = b + (gray - b) * desaturation;
                 }
 
-                // Step 2: Apply brightness (-1 to 1 maps to -255 to +255)
                 const brightnessOffset = brightness * 255;
                 r = r + brightnessOffset;
                 g = g + brightnessOffset;
                 b = b + brightnessOffset;
 
-                // Step 3: Apply contrast (0-2, where 1 is neutral)
-                // Contrast formula: ((value - 128) * contrast) + 128
                 const contrastFactor = contrast;
                 r = (r - 128) * contrastFactor + 128;
                 g = (g - 128) * contrastFactor + 128;
                 b = (b - 128) * contrastFactor + 128;
 
-                // Step 4: Apply tint (colorize effect)
                 if (useTint) {
-                    // Colorize: multiply grayscale by tint colour
                     const gray = (r + g + b) / 3;
                     r = gray * tintRgba.red;
                     g = gray * tintRgba.green;
                     b = gray * tintRgba.blue;
                 }
 
-                // Clamp values to 0-255 and store
                 newPixels[offset] = Math.max(0, Math.min(255, Math.round(r)));
                 newPixels[offset + 1] = Math.max(0, Math.min(255, Math.round(g)));
                 newPixels[offset + 2] = Math.max(0, Math.min(255, Math.round(b)));
@@ -1485,7 +1312,6 @@ const IconEffectDialog = GObject.registerClass({
             }
         }
 
-        // Create new pixbuf from modified data
         const newPixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
             GLib.Bytes.new(newPixels),
             GdkPixbuf.Colorspace.RGB,
@@ -1496,12 +1322,10 @@ const IconEffectDialog = GObject.registerClass({
             rowstride
         );
 
-        // Set the modified pixbuf as the preview image
         this._previewImage.set_from_pixbuf(newPixbuf);
     }
 
     _applyChanges() {
-        // Get final values
         const desaturation = this._desaturationRow._slider.get_value();
         const brightness = this._brightnessRow._slider.get_value();
         const contrast = this._contrastRow._slider.get_value();
@@ -1509,7 +1333,6 @@ const IconEffectDialog = GObject.registerClass({
         const tintRgba = this._colorButton.get_rgba();
         const tintColor = [tintRgba.red, tintRgba.green, tintRgba.blue];
 
-        // Create override object
         const override = {
             desaturation,
             brightness,
@@ -1518,7 +1341,6 @@ const IconEffectDialog = GObject.registerClass({
             tintColor,
         };
 
-        // Save to settings
         const overrides = this._settings.get_value('icon-effect-overrides').deep_unpack();
         overrides[this._appId] = JSON.stringify(override);
         this._settings.set_value('icon-effect-overrides', new GLib.Variant('a{ss}', overrides));
@@ -1530,7 +1352,6 @@ const IconEffectDialog = GObject.registerClass({
     }
 
     _resetToDefault() {
-        // Remove override from settings
         const overrides = this._settings.get_value('icon-effect-overrides').deep_unpack();
         delete overrides[this._appId];
         this._settings.set_value('icon-effect-overrides', new GLib.Variant('a{ss}', overrides));
@@ -1550,39 +1371,31 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         this._signalIds = [];
         this._appRows = new Map();  // appId -> AppRow
 
-        // Create a preferences page
         const page = new Adw.PreferencesPage({
             title: 'General',
             icon_name: 'preferences-system-symbolic',
         });
         window.add(page);
 
-        // ═══════════════════════════════════════════════════════════════
-        // Appearance Group
-        // ═══════════════════════════════════════════════════════════════
         const appearanceGroup = new Adw.PreferencesGroup({
             title: 'Appearance',
             description: 'Control how tray icons look in the panel',
         });
         page.add(appearanceGroup);
 
-        // Icon Mode row
         const iconModeRow = new Adw.ComboRow({
             title: 'Icon Style',
             subtitle: 'How tray icons are displayed',
         });
 
-        // Create string list model for combo
         const iconModeModel = new Gtk.StringList();
         iconModeModel.append('Symbolic (monochrome)');
         iconModeModel.append('Original (colored)');
         iconModeRow.set_model(iconModeModel);
 
-        // Set current value
         const currentMode = this._settings.get_string('icon-mode');
         iconModeRow.set_selected(currentMode === 'symbolic' ? 0 : 1);
 
-        // Connect change handler
         iconModeRow.connect('notify::selected', () => {
             const selected = iconModeRow.get_selected();
             this._settings.set_string('icon-mode', selected === 0 ? 'symbolic' : 'original');
@@ -1590,16 +1403,12 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         appearanceGroup.add(iconModeRow);
 
-        // ═══════════════════════════════════════════════════════════════
-        // Apps Group
-        // ═══════════════════════════════════════════════════════════════
         this._appsGroup = new Adw.PreferencesGroup({
             title: 'Tray Apps',
             description: 'Drag to reorder. Click the icon to customize. Toggle to show/hide.',
         });
         page.add(this._appsGroup);
 
-        // Info row when no apps are detected
         this._infoRow = new Adw.ActionRow({
             title: 'No apps detected yet',
             subtitle: 'Start an app with tray support (like Nextcloud, Discord, Slack) and it will appear here',
@@ -1609,15 +1418,9 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             pixel_size: 24,
         }));
 
-        // Populate initial apps
         this._populateAppsGroup();
-
-        // Subscribe to SNI registration signals for live updates
         this._subscribeToSignals();
 
-        // ═══════════════════════════════════════════════════════════════
-        // About Group
-        // ═══════════════════════════════════════════════════════════════
         const aboutGroup = new Adw.PreferencesGroup({
             title: 'About',
         });
@@ -1654,15 +1457,13 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         });
         aboutGroup.add(linkRow);
 
-        // Cleanup on window close
         window.connect('close-request', () => {
             this._cleanup();
-            return false;  // Allow window to close
+            return false;
         });
     }
 
     _subscribeToSignals() {
-        // Subscribe to item registered signal
         const registeredId = this._bus.signal_subscribe(
             'org.kde.StatusNotifierWatcher',
             'org.kde.StatusNotifierWatcher',
@@ -1678,7 +1479,6 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         );
         this._signalIds.push(registeredId);
 
-        // Subscribe to item unregistered signal
         const unregisteredId = this._bus.signal_subscribe(
             'org.kde.StatusNotifierWatcher',
             'org.kde.StatusNotifierWatcher',
@@ -1705,12 +1505,10 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             return;
         }
 
-        // Remove "no apps" placeholder if present
         if (this._appRows.size === 0) {
             this._appsGroup.remove(this._infoRow);
         }
 
-        // Create and add new row with reorder callback
         const row = new AppRow(
             appId, busName, objectPath, this._settings, this._window,
             (draggedId, targetId) => this._handleReorder(draggedId, targetId)
@@ -1718,7 +1516,6 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         this._appRows.set(appId, row);
         this._appsGroup.add(row);
 
-        // Add to app-order if not already present
         this._ensureInAppOrder(appId);
 
         debug(`Added app row for ${appId}`);
@@ -1733,7 +1530,6 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             this._appRows.delete(appId);
             debug(`Removed app row for ${appId}`);
 
-            // Show placeholder if no apps left
             if (this._appRows.size === 0) {
                 this._appsGroup.add(this._infoRow);
             }
@@ -1759,10 +1555,8 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
     }
 
     _populateAppsGroup() {
-        const appIds = new Map();  // appId -> { busName, objectPath }
+        const appIds = new Map();
 
-        // Get currently registered SNI items - these are the apps we can actually
-        // fetch icons and info for. We only show apps that are currently running.
         try {
             const reply = this._bus.call_sync(
                 'org.kde.StatusNotifierWatcher',
@@ -1787,25 +1581,16 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             debug(`Failed to get registered SNI items: ${e.message}`);
         }
 
-        // Populate the group
         if (appIds.size === 0) {
             this._appsGroup.add(this._infoRow);
         } else {
-            // Sort apps based on app-order setting, with unordered apps at the end
             const appOrder = this._settings.get_strv('app-order');
             const sortedApps = Array.from(appIds.keys()).sort((a, b) => {
                 const aIndex = appOrder.indexOf(a);
                 const bIndex = appOrder.indexOf(b);
-
-                // Both in order list: sort by position
-                if (aIndex !== -1 && bIndex !== -1) {
-                    return aIndex - bIndex;
-                }
-                // Only a is in order list: a comes first
+                if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
                 if (aIndex !== -1) return -1;
-                // Only b is in order list: b comes first
                 if (bIndex !== -1) return 1;
-                // Neither in order list: sort alphabetically
                 return a.toLowerCase().localeCompare(b.toLowerCase());
             });
 
@@ -1818,16 +1603,13 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
                 this._appRows.set(appId, row);
                 this._appsGroup.add(row);
 
-                // Ensure app is in the app-order list
                 this._ensureInAppOrder(appId);
             }
         }
     }
 
+    // Format: ":1.xxx/objectPath" or ":1.xxx" or "org.app.Name/path"
     _extractAppId(item) {
-        // Parse SNI item format to get a meaningful app ID
-        // Format: ":1.xxx/objectPath" or ":1.xxx" or "org.app.Name/path"
-
         let objectPath;
 
         if (item.startsWith(':')) {
@@ -1851,21 +1633,15 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         const pathParts = objectPath.split('/').filter(p => p.length > 0);
         if (pathParts.length > 0) {
             const lastPart = pathParts[pathParts.length - 1];
-            // Skip generic names
             if (lastPart !== 'StatusNotifierItem' && lastPart !== 'item') {
                 return lastPart;
             }
         }
 
-        // Fall back to bus name portion
         const firstSlash = item.indexOf('/');
         return firstSlash > 0 ? item.substring(0, firstSlash) : item;
     }
 
-    /**
-     * Ensure an app ID is in the app-order list
-     * Adds it to the end if not present
-     */
     _ensureInAppOrder(appId) {
         const appOrder = this._settings.get_strv('app-order');
         if (!appOrder.includes(appId)) {
@@ -1875,17 +1651,11 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         }
     }
 
-    /**
-     * Handle reordering when an app is dragged and dropped
-     * @param {string} draggedId - The app ID that was dragged
-     * @param {string} targetId - The app ID that was dropped onto
-     */
     _handleReorder(draggedId, targetId) {
         debug(`Reordering: moving ${draggedId} to position of ${targetId}`);
 
         const appOrder = this._settings.get_strv('app-order');
 
-        // Ensure both apps are in the order list
         if (!appOrder.includes(draggedId)) {
             appOrder.push(draggedId);
         }
@@ -1893,37 +1663,22 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             appOrder.push(targetId);
         }
 
-        // Find positions
         const draggedIndex = appOrder.indexOf(draggedId);
-        const targetIndex = appOrder.indexOf(targetId);
-
-        // Remove dragged item from its current position
         appOrder.splice(draggedIndex, 1);
 
-        // Find new target index (it may have shifted after removal)
         const newTargetIndex = appOrder.indexOf(targetId);
-
-        // Insert dragged item at target position
         appOrder.splice(newTargetIndex, 0, draggedId);
 
-        // Save the new order
         this._settings.set_strv('app-order', appOrder);
 
         debug(`New app-order: ${appOrder.join(', ')}`);
 
-        // Rebuild the UI to reflect new order
         this._rebuildAppsGroup();
     }
 
-    /**
-     * Rebuild the apps group to reflect current app-order
-     * Reuses existing rows to preserve their state (resolved names, icons, etc.)
-     */
     _rebuildAppsGroup() {
         const appOrder = this._settings.get_strv('app-order');
 
-        // Get rows sorted by app-order
-        // Use the row's current _appId (which may have been updated by _fetchAppInfo)
         const rows = Array.from(this._appRows.values());
         rows.sort((a, b) => {
             const aIndex = appOrder.indexOf(a._appId);
@@ -1934,12 +1689,10 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             return a._appId.toLowerCase().localeCompare(b._appId.toLowerCase());
         });
 
-        // Remove all rows from the group (but don't destroy them)
         for (const row of rows) {
             this._appsGroup.remove(row);
         }
 
-        // Re-add rows in sorted order
         for (const row of rows) {
             this._appsGroup.add(row);
         }
@@ -1950,11 +1703,9 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
     _cleanup() {
         debug('Cleaning up preferences window');
 
-        // Unsubscribe from D-Bus signals
         for (const signalId of this._signalIds)
             this._bus.signal_unsubscribe(signalId);
 
-        // Nullify all properties
         this._signalIds = null;
         this._appRows = null;
         this._appsGroup = null;
@@ -1963,7 +1714,6 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         this._settings = null;
         this._window = null;
 
-        // Clean up module-level state
         _draggedRow = null;
     }
 }

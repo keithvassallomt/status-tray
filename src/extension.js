@@ -20,20 +20,14 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import St from 'gi://St';
-import Gtk from 'gi://Gtk';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-// Debug logging - set to true during development
 const DEBUG = false;
-
-// Fallback icon when icon loading fails
 const FALLBACK_ICON_NAME = 'image-loading-symbolic';
-
-// Pixel format for IconPixmap - ARGB in network byte order
 const PIXMAPS_FORMAT = Cogl.PixelFormat.ARGB_8888;
 
 function debug(msg) {
@@ -42,28 +36,41 @@ function debug(msg) {
     }
 }
 
-/**
- * Check if an icon exists in the system theme
- * @param {string} iconName - Icon name to check
- * @returns {boolean} - True if icon exists in theme
- */
 function iconExistsInTheme(iconName) {
     try {
-        const settings = St.Settings.get();
-        const iconTheme = new Gtk.IconTheme();
-        iconTheme.set_theme_name(settings.gtk_icon_theme);
-        return iconTheme.has_icon(iconName);
+        const themeName = St.Settings.get().gtk_icon_theme;
+        const dataDirs = GLib.get_system_data_dirs();
+
+        const iconDirs = dataDirs.map(d => `${d}/icons`);
+        iconDirs.push('/var/lib/flatpak/exports/share/icons');
+        iconDirs.push(`${GLib.get_home_dir()}/.local/share/icons`);
+
+        const themes = [themeName, 'hicolor'];
+        const subdirs = [
+            'scalable/apps', 'scalable/status',
+            '48x48/apps', '32x32/apps', '24x24/apps', '22x22/apps', '16x16/apps',
+        ];
+        const exts = ['.svg', '.png'];
+
+        for (const baseDir of iconDirs) {
+            for (const theme of themes) {
+                for (const subdir of subdirs) {
+                    for (const ext of exts) {
+                        if (GLib.file_test(`${baseDir}/${theme}/${subdir}/${iconName}${ext}`, GLib.FileTest.EXISTS))
+                            return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     } catch (e) {
         debug(`Error checking icon existence: ${e.message}`);
         return false;
     }
 }
 
-/**
- * StatusNotifierItem D-Bus interface XML
- * Based on KDE's SNI spec - defines the expected interface structure
- * This helps Gio.DBusProxy handle broken implementations more gracefully
- */
+// SNI D-Bus interface XML — helps Gio.DBusProxy handle broken implementations
 const SNI_INTERFACE_XML = `
 <node>
   <interface name="org.kde.StatusNotifierItem">
@@ -103,10 +110,6 @@ const SNI_INTERFACE_XML = `
 </node>
 `;
 
-/**
- * StatusNotifierWatcher D-Bus interface XML
- * This is the service that apps register their tray icons with
- */
 const SNW_INTERFACE_XML = `
 <node>
   <interface name="org.kde.StatusNotifierWatcher">
@@ -131,15 +134,12 @@ const SNW_INTERFACE_XML = `
 </node>
 `;
 
-// Bus name and object path for the watcher
 const WATCHER_BUS_NAME = 'org.kde.StatusNotifierWatcher';
 const WATCHER_OBJECT_PATH = '/StatusNotifierWatcher';
 const DEFAULT_ITEM_OBJECT_PATH = '/StatusNotifierItem';
 
-// Regex for D-Bus bus names
 const BUS_ADDRESS_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)+$/;
 
-// Parse the interface XML once
 let _sniInterfaceInfo = null;
 function getSNIInterfaceInfo() {
     if (!_sniInterfaceInfo) {
@@ -149,7 +149,6 @@ function getSNIInterfaceInfo() {
     return _sniInterfaceInfo;
 }
 
-// Cached settings object for dark mode detection
 let _interfaceSettings = null;
 
 function isDarkMode() {
@@ -165,39 +164,19 @@ function isDarkMode() {
     }
 }
 
-/**
- * Strip GTK mnemonic underscores from labels
- * "_File" -> "File", "__File" -> "_File"
- */
+// "_File" -> "File", "__File" -> "_File"
 function stripMnemonics(label) {
     if (!label) return '';
-    // Replace single underscore before a character with nothing
-    // But preserve double underscores as single underscore
     return label.replace(/__/g, '\x00').replace(/_/g, '').replace(/\x00/g, '_');
 }
 
-/**
- * Extract Flatpak app ID from IconThemePath
- * Flatpak apps have paths like: /run/user/1000/app/org.ferdium.Ferdium/.org.chromium.Chromium.xxx
- * Returns the app ID (e.g., "org.ferdium.Ferdium") or null if not a Flatpak path
- */
+// e.g. "/run/user/1000/app/org.ferdium.Ferdium/..." -> "org.ferdium.Ferdium"
 function extractFlatpakAppId(iconThemePath) {
     if (!iconThemePath) return null;
     const match = iconThemePath.match(/\/run\/user\/\d+\/app\/([^/]+)/);
     return match ? match[1] : null;
 }
 
-/**
- * TrayItem - A panel button representing a single StatusNotifierItem
- *
- * Each TrayItem connects to one SNI service and:
- * 1. Displays its icon in the panel
- * 2. Fetches its menu via DBusMenu when clicked
- * 3. Handles menu item activation
- *
- * Uses Gio.DBusProxy with interface info for more robust property handling,
- * especially for apps with non-standard SNI implementations.
- */
 const TrayItem = GObject.registerClass({
     Signals: {
         'appid-resolved': { param_types: [GObject.TYPE_STRING] },
@@ -209,19 +188,19 @@ const TrayItem = GObject.registerClass({
 
         this._busName = busName;
         this._objectPath = objectPath;
-        this._menuPath = null;  // Will be fetched from SNI Menu property
+        this._menuPath = null;
         this._iconThemePath = null;
         this._settings = settings;
         this._proxy = null;
         this._cancellable = new Gio.Cancellable();
 
-        // Extract app ID for icon override lookups
-        // This is a preliminary ID; will be updated with SNI Id property when available
+        // Preliminary ID; updated later with SNI Id/ToolTip when available
         this._appId = this._extractId(busName, objectPath);
 
         this._signalIds = [];
 
         this._tempFilePath = null;
+        this._fallbackOverrideIcon = null;
 
         this._icon = new St.Icon({
             style_class: 'system-status-icon status-tray-icon',
@@ -235,15 +214,13 @@ const TrayItem = GObject.registerClass({
 
         this._initProxy();
 
-        // Add a placeholder item so the menu isn't empty
-        // (GNOME Shell won't open an empty menu)
+        // GNOME Shell won't open an empty menu, so add a placeholder
         this._loadingItem = new PopupMenu.PopupMenuItem('Loading...', {
             reactive: false,
             style_class: 'popup-inactive-menu-item',
         });
         this.menu.addMenuItem(this._loadingItem);
 
-        // Set up menu open handler to fetch fresh menu items
         this.menu.connect('open-state-changed', (menu, isOpen) => {
             debug(`Menu open-state-changed: isOpen=${isOpen}, busName=${this._busName}`);
             if (isOpen) {
@@ -255,25 +232,16 @@ const TrayItem = GObject.registerClass({
     }
 
     _extractId(busName, objectPath) {
-        // Try to get a human-readable ID from the SNI
-        // Usually the object path contains something meaningful
         const pathParts = objectPath.split('/').filter(p => p.length > 0);
         if (pathParts.length > 0) {
             const lastPart = pathParts[pathParts.length - 1];
-            // Skip generic names that don't identify the app
             if (lastPart !== 'StatusNotifierItem' && lastPart !== 'item') {
                 return lastPart;
             }
         }
-        // Fall back to bus name
         return busName;
     }
 
-    /**
-     * Initialize the D-Bus proxy for the SNI
-     * Using Gio.DBusProxy with interface info provides better compatibility
-     * with apps that have non-standard implementations
-     */
     async _initProxy() {
         try {
             this._proxy = new Gio.DBusProxy({
@@ -316,9 +284,6 @@ const TrayItem = GObject.registerClass({
         }
     }
 
-    /**
-     * Fetch properties using the proxy's cached values or direct calls
-     */
     _fetchPropertiesFromProxy() {
         const iconThemePath = this._proxy.get_cached_property('IconThemePath');
         if (iconThemePath) {
@@ -342,9 +307,6 @@ const TrayItem = GObject.registerClass({
         this._updateIcon();
     }
 
-    /**
-     * Resolve the app ID using multiple sources for better Electron app identification
-     */
     _resolveAppId() {
         const oldAppId = this._appId;
         let newAppId = null;
@@ -392,21 +354,31 @@ const TrayItem = GObject.registerClass({
         }
     }
 
-    /**
-     * Update icon from proxy cached properties
-     */
     _updateIcon() {
         debug(`_updateIcon called for ${this._busName}`);
 
-        // Check for icon override first
+        this._fallbackOverrideIcon = null;
         if (this._settings) {
             try {
                 const overrides = this._settings.get_value('icon-overrides').deep_unpack();
                 if (overrides[this._appId]) {
                     const overrideIcon = overrides[this._appId];
-                    debug(`Using icon override for ${this._appId}: ${overrideIcon}`);
-                    this._setIcon(overrideIcon);
-                    return;
+                    let isFallbackOnly = false;
+                    try {
+                        const fallbackApps = this._settings.get_strv('icon-fallback-overrides');
+                        isFallbackOnly = fallbackApps.includes(this._appId);
+                    } catch (e) {
+                        // Key may not exist in older schema versions
+                    }
+
+                    if (isFallbackOnly) {
+                        this._fallbackOverrideIcon = overrideIcon;
+                        debug(`Fallback override stored for ${this._appId}: ${overrideIcon}`);
+                    } else {
+                        debug(`Using icon override for ${this._appId}: ${overrideIcon}`);
+                        this._setIcon(overrideIcon);
+                        return;
+                    }
                 }
             } catch (e) {
                 debug(`Failed to check icon overrides: ${e.message}`);
@@ -414,6 +386,11 @@ const TrayItem = GObject.registerClass({
         }
 
         if (!this._proxy) {
+            if (this._fallbackOverrideIcon) {
+                debug(`No proxy, using fallback override for ${this._appId}`);
+                this._setIcon(this._fallbackOverrideIcon);
+                return;
+            }
             debug(`No proxy available for ${this._busName}, skipping icon update`);
             return;
         }
@@ -434,6 +411,13 @@ const TrayItem = GObject.registerClass({
             }
         }
 
+        // No IconName available - use fallback override if set
+        if (this._fallbackOverrideIcon) {
+            debug(`No IconName, using fallback override for ${this._appId}`);
+            this._setIcon(this._fallbackOverrideIcon);
+            return;
+        }
+
         const iconPixmapVariant = this._proxy.get_cached_property('IconPixmap');
         if (iconPixmapVariant) {
             debug(`Got IconPixmap from proxy, processing...`);
@@ -445,9 +429,6 @@ const TrayItem = GObject.registerClass({
         this._fetchIconDirect();
     }
 
-    /**
-     * Fetch icon directly via D-Bus call (fallback)
-     */
     _fetchIconDirect() {
         const bus = Gio.DBus.session;
 
@@ -477,7 +458,6 @@ const TrayItem = GObject.registerClass({
                     }
                 }
 
-                // Now fetch IconName
                 this._fetchIconNameDirect();
             }
         );
@@ -505,6 +485,9 @@ const TrayItem = GObject.registerClass({
                     if (iconName && iconName.length > 0) {
                         debug(`Got IconName (direct): ${iconName}`);
                         this._setIcon(iconName);
+                    } else if (this._fallbackOverrideIcon) {
+                        debug(`No IconName (direct), using fallback override for ${this._appId}`);
+                        this._setIcon(this._fallbackOverrideIcon);
                     } else {
                         debug(`IconName is empty for ${this._busName}, trying IconPixmap`);
                         this._fetchIconPixmapDirect();
@@ -513,7 +496,11 @@ const TrayItem = GObject.registerClass({
                     if (!e.message?.includes('CANCELLED')) {
                         debug(`Failed to get IconName: ${e}`);
                     }
-                    this._fetchIconPixmapDirect();
+                    if (this._fallbackOverrideIcon) {
+                        this._setIcon(this._fallbackOverrideIcon);
+                    } else {
+                        this._fetchIconPixmapDirect();
+                    }
                 }
             }
         );
@@ -546,9 +533,6 @@ const TrayItem = GObject.registerClass({
         );
     }
 
-    /**
-     * Try to fetch IconPixmap, with fallback to system icon theme lookup
-     */
     _fetchIconPixmapWithFallback(iconName) {
         const bus = Gio.DBus.session;
 
@@ -588,9 +572,6 @@ const TrayItem = GObject.registerClass({
         );
     }
 
-    /**
-     * Subscribe to SNI signals for icon/status updates
-     */
     _subscribeToSignals() {
         const bus = Gio.DBus.session;
 
@@ -644,9 +625,6 @@ const TrayItem = GObject.registerClass({
         this._signalIds.push(nameWatchId);
     }
 
-    /**
-     * Fallback to direct D-Bus calls when proxy initialization fails
-     */
     _connectToSNIFallback() {
         debug(`Using fallback D-Bus calls for ${this._busName}`);
         this._fetchIdDirect();
@@ -655,10 +633,6 @@ const TrayItem = GObject.registerClass({
         this._subscribeToSignals();
     }
 
-    /**
-     * Fetch SNI Id and related properties directly via D-Bus (for fallback mode)
-     * Updates _appId with stable identifier using same priority as proxy mode
-     */
     _fetchIdDirect() {
         const bus = Gio.DBus.session;
 
@@ -697,9 +671,6 @@ const TrayItem = GObject.registerClass({
         );
     }
 
-    /**
-     * Try to extract app ID from IconThemePath (for Flatpak apps)
-     */
     _fetchIdFromIconThemePathDirect() {
         const bus = Gio.DBus.session;
 
@@ -740,9 +711,6 @@ const TrayItem = GObject.registerClass({
         );
     }
 
-    /**
-     * Fetch SNI Id property as last resort (skips generic chrome_status_icon_*)
-     */
     _fetchSniIdDirect() {
         const bus = Gio.DBus.session;
 
@@ -776,9 +744,6 @@ const TrayItem = GObject.registerClass({
         );
     }
 
-    /**
-     * Fetch menu path directly via D-Bus (for fallback mode)
-     */
     _fetchMenuPathDirect() {
         const bus = Gio.DBus.session;
 
@@ -854,28 +819,40 @@ const TrayItem = GObject.registerClass({
             }
             debug(`No icon file found in IconThemePath: ${this._iconThemePath}`);
 
+            // Try Flatpak app ID as icon name before falling to pixmap
+            const flatpakId = extractFlatpakAppId(this._iconThemePath);
+            if (flatpakId && iconExistsInTheme(flatpakId)) {
+                debug(`Using Flatpak app icon: ${flatpakId}`);
+                this._icon.set_icon_name(flatpakId);
+                this._applySymbolicStyle();
+                return;
+            }
+
             debug(`IconThemePath inaccessible (possibly sandboxed), trying IconPixmap`);
             this._fetchIconPixmapWithFallback(iconName);
             return;
         }
 
-        // Check if icon exists in system theme before using it
         if (iconExistsInTheme(iconName)) {
             debug(`Using system icon theme lookup for: ${iconName}`);
             this._icon.set_icon_name(iconName);
             this._applySymbolicStyle();
         } else {
+            // Try Flatpak app ID as icon name before falling to pixmap
+            if (this._iconThemePath) {
+                const flatpakId = extractFlatpakAppId(this._iconThemePath);
+                if (flatpakId && iconExistsInTheme(flatpakId)) {
+                    debug(`Using Flatpak app icon: ${flatpakId}`);
+                    this._icon.set_icon_name(flatpakId);
+                    this._applySymbolicStyle();
+                    return;
+                }
+            }
             debug(`Icon ${iconName} not found in theme, trying IconPixmap fallback`);
             this._fetchIconPixmapWithFallback(iconName);
         }
     }
 
-    /**
-     * Apply symbolic (monochrome) styling to the icon
-     * Uses Clutter effects to desaturate and adjust brightness
-     * Based on Status Kitchen's implementation in src/generator/mod.rs
-     * Supports per-app effect customization via icon-effect-overrides setting
-     */
     _applySymbolicStyle() {
         const iconMode = this._settings?.get_string('icon-mode') ?? 'symbolic';
         if (iconMode !== 'symbolic') {
@@ -944,11 +921,6 @@ const TrayItem = GObject.registerClass({
         this._icon.set_style('icon-size: 16px;');
     }
 
-    /**
-     * Set icon from IconPixmap variant data
-     * Uses St.ImageContent for direct ARGB rendering (like AppIndicator does)
-     * This is more efficient than saving to temp files
-     */
     _setIconFromPixmap(pixmapVariant) {
         try {
             let pixmaps;
@@ -1091,11 +1063,7 @@ const TrayItem = GObject.registerClass({
         }
     }
 
-    /**
-     * Convert ARGB pixel data (network byte order) to RGBA
-     * IconPixmap uses big-endian ARGB: each pixel is [A, R, G, B]
-     * GdkPixbuf wants RGBA: each pixel is [R, G, B, A]
-     */
+    // IconPixmap ARGB (big-endian) -> GdkPixbuf RGBA
     _argbToRgba(argbData, width, height) {
         const pixels = width * height;
         const rgba = new Uint8Array(pixels * 4);
@@ -1104,7 +1072,6 @@ const TrayItem = GObject.registerClass({
             const srcOffset = i * 4;
             const dstOffset = i * 4;
 
-            // ARGB (big-endian) -> RGBA
             const a = argbData[srcOffset];
             const r = argbData[srcOffset + 1];
             const g = argbData[srcOffset + 2];
@@ -1127,7 +1094,6 @@ const TrayItem = GObject.registerClass({
             return;
         }
 
-        // Clear existing menu items and show a loading placeholder
         this.menu.removeAll();
         const loadingItem = new PopupMenu.PopupMenuItem('Loading...', {
             reactive: false,
@@ -1159,7 +1125,6 @@ const TrayItem = GObject.registerClass({
                     debug(`AboutToShow failed (may be ok): ${e}`);
                 }
 
-                // Now fetch the layout
                 this._fetchMenuLayout();
             }
         );
@@ -1189,7 +1154,6 @@ const TrayItem = GObject.registerClass({
                     const reply = conn.call_finish(result);
                     const [revision, layout] = reply.deep_unpack();
                     debug(`Got menu layout, revision ${revision}`);
-                    // Clear loading placeholder before rendering the menu
                     this.menu.removeAll();
                     this._buildMenuFromLayout(layout);
                 } catch (e) {
@@ -1341,24 +1305,18 @@ const TrayItem = GObject.registerClass({
     }
 
     destroy() {
-        // Cancel any pending async operations
         if (this._cancellable) {
             this._cancellable.cancel();
             this._cancellable = null;
         }
 
-        // Clean up signal subscriptions
         const bus = Gio.DBus.session;
         for (const signalId of this._signalIds)
             bus.signal_unsubscribe(signalId);
         this._signalIds = [];
 
-        // Clean up proxy
-        if (this._proxy) {
-            this._proxy = null;
-        }
+        this._proxy = null;
 
-        // Clean up temp icon file if created
         if (this._tempFilePath) {
             try {
                 const file = Gio.File.new_for_path(this._tempFilePath);
@@ -1374,18 +1332,14 @@ const TrayItem = GObject.registerClass({
     }
 });
 
-/**
- * StatusNotifierWatcher - Implements the org.kde.StatusNotifierWatcher D-Bus interface
- *
- * This allows apps to register their tray icons with us directly,
- * making the extension independent of any external daemon.
- */
 class StatusNotifierWatcher {
     constructor(extension) {
         this._extension = extension;
-        this._items = new Map();  // uniqueId -> { busName, objectPath }
-        this._nameOwnerChangedIds = new Map();  // busName -> signalId
+        this._items = new Map();
+        this._nameOwnerChangedIds = new Map();
         this._cancellable = new Gio.Cancellable();
+        this._healthCheckTimeoutId = 0;
+        this._pendingDelayIds = new Set();
 
         const nodeInfo = Gio.DBusNodeInfo.new_for_xml(SNW_INTERFACE_XML);
         const ifaceInfo = nodeInfo.lookup_interface('org.kde.StatusNotifierWatcher');
@@ -1416,12 +1370,21 @@ class StatusNotifierWatcher {
         );
 
         this._seekExistingItems();
+
+        // Schedule a delayed health check for items discovered above.
+        // After suspend/resume, GNOME Shell disables and re-enables extensions,
+        // so this constructor runs fresh each time. Stale Flatpak xdg-dbus-proxy
+        // zombies often respond to initial property queries but break within
+        // seconds — the delay gives them time to fail before we test.
+        // At normal login this is harmless: all items pass the check.
+        this._healthCheckTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 8000, () => {
+            this._healthCheckTimeoutId = 0;
+            this._healthCheckAllItems();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
-    /**
-     * Scan the bus for any StatusNotifierItem objects that exist
-     * This handles apps that registered before we claimed the watcher name
-     */
+    // Find apps that registered before we claimed the watcher name
     async _seekExistingItems() {
         try {
             const bus = Gio.DBus.session;
@@ -1465,6 +1428,166 @@ class StatusNotifierWatcher {
         }
     }
 
+    _delay(ms) {
+        return new Promise(resolve => {
+            const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+                this._pendingDelayIds.delete(id);
+                resolve();
+                return GLib.SOURCE_REMOVE;
+            });
+            this._pendingDelayIds.add(id);
+        });
+    }
+
+    // After suspend/resume, Flatpak xdg-dbus-proxy zombies keep their bus name
+    // alive but stop responding. We detect these and kill them so
+    // NameOwnerChanged fires and cleans up normally.
+    async _healthCheckAllItems() {
+        // Delay to let D-Bus settle after resume
+        await this._delay(5000);
+
+        const bus = Gio.DBus.session;
+        const staleItems = [];
+
+        for (const [uniqueId, itemInfo] of this._items) {
+            const isStale = await this._isItemStale(bus, itemInfo);
+            if (isStale) {
+                debug(`Health check failed for ${uniqueId}`);
+                staleItems.push({uniqueId, busName: itemInfo.busName});
+            } else {
+                debug(`Health check passed: ${uniqueId}`);
+            }
+        }
+
+        for (const {uniqueId, busName} of staleItems) {
+            const killed = await this._tryKillStaleProxy(busName);
+            if (!killed) {
+                // Non-Flatpak or couldn't kill — unregister directly
+                debug(`Direct unregister for stale item: ${uniqueId}`);
+                this._unregisterItem(uniqueId);
+            }
+            // If killed, NameOwnerChanged will fire and clean up for us
+        }
+
+        if (staleItems.length > 0) {
+            debug(`Handled ${staleItems.length} stale item(s) after resume`);
+            // Wait for NameOwnerChanged from killed proxies before re-scanning
+            await this._delay(2000);
+        }
+
+        // Re-scan for apps that may have re-registered with new bus names
+        this._seekExistingItems();
+    }
+
+    // Two-phase check: GetAll on SNI properties + GetLayout on menu.
+    // Catches "half-alive" proxies where properties work but menu is broken.
+    async _isItemStale(bus, itemInfo) {
+        try {
+            const propsResult = await new Promise((resolve, reject) => {
+                bus.call(
+                    itemInfo.busName,
+                    itemInfo.objectPath,
+                    'org.freedesktop.DBus.Properties',
+                    'GetAll',
+                    new GLib.Variant('(s)', ['org.kde.StatusNotifierItem']),
+                    new GLib.VariantType('(a{sv})'),
+                    Gio.DBusCallFlags.NONE,
+                    5000,
+                    this._cancellable,
+                    (conn, res) => {
+                        try {
+                            resolve(conn.call_finish(res));
+                        } catch (e) {
+                            reject(e);
+                        }
+                    }
+                );
+            });
+
+            const props = propsResult.deep_unpack()[0];
+            const menuVariant = props['Menu'];
+            if (menuVariant) {
+                const menuPath = menuVariant.deep_unpack();
+                debug(`Probing menu at ${itemInfo.busName} ${menuPath}`);
+                await new Promise((resolve, reject) => {
+                    bus.call(
+                        itemInfo.busName,
+                        menuPath,
+                        'com.canonical.dbusmenu',
+                        'GetLayout',
+                        new GLib.Variant('(iias)', [0, 0, []]),
+                        new GLib.VariantType('(u(ia{sv}av))'),
+                        Gio.DBusCallFlags.NONE,
+                        5000,
+                        this._cancellable,
+                        (conn, res) => {
+                            try {
+                                conn.call_finish(res);
+                                resolve();
+                            } catch (e) {
+                                reject(e);
+                            }
+                        }
+                    );
+                });
+            }
+
+            return false;
+        } catch (e) {
+            debug(`Stale check failed for ${itemInfo.busName}: ${e.message}`);
+            return true;
+        }
+    }
+
+    async _tryKillStaleProxy(busName) {
+        try {
+            const bus = Gio.DBus.session;
+
+            const pidResult = await new Promise((resolve, reject) => {
+                bus.call(
+                    'org.freedesktop.DBus',
+                    '/org/freedesktop/DBus',
+                    'org.freedesktop.DBus',
+                    'GetConnectionUnixProcessID',
+                    new GLib.Variant('(s)', [busName]),
+                    new GLib.VariantType('(u)'),
+                    Gio.DBusCallFlags.NONE,
+                    2000,
+                    this._cancellable,
+                    (conn, res) => {
+                        try {
+                            resolve(conn.call_finish(res));
+                        } catch (e) {
+                            reject(e);
+                        }
+                    }
+                );
+            });
+
+            const [pid] = pidResult.deep_unpack();
+            if (!pid) return false;
+
+            const cgroupFile = Gio.File.new_for_path(`/proc/${pid}/cgroup`);
+            const [ok, contents] = cgroupFile.load_contents(null);
+            if (!ok) return false;
+
+            const cgroupText = new TextDecoder().decode(contents);
+            if (!cgroupText.includes('app-flatpak-')) {
+                debug(`Stale item ${busName} (PID ${pid}) is not a Flatpak proxy`);
+                return false;
+            }
+
+            // Killing the zombie proxy makes the bus name vanish,
+            // triggering NameOwnerChanged cleanup.
+            debug(`Killing stale Flatpak proxy ${busName} (PID ${pid})`);
+            GLib.spawn_command_line_async(`kill ${pid}`);
+            return true;
+        } catch (e) {
+            debug(`Failed to check/kill stale proxy ${busName}: ${e.message}`);
+            return false;
+        }
+    }
+
     async _checkForSNI(busName, objectPath) {
         const bus = Gio.DBus.session;
 
@@ -1500,10 +1623,6 @@ class StatusNotifierWatcher {
         }
     }
 
-    /**
-     * D-Bus method: RegisterStatusNotifierItem
-     * Called by apps when they want to register a tray icon
-     */
     async RegisterStatusNotifierItemAsync(params, invocation) {
         const [service] = params;
         let busName, objectPath;
@@ -1511,15 +1630,12 @@ class StatusNotifierWatcher {
         debug(`RegisterStatusNotifierItem called with: ${service}`);
 
         if (service.charAt(0) === '/') {
-            // It's a path - use the sender's bus name
             busName = invocation.get_sender();
             objectPath = service;
         } else if (BUS_ADDRESS_REGEX.test(service)) {
-            // It's a well-known bus name - resolve to unique name
             busName = await this._resolveNameOwner(service, invocation);
             objectPath = DEFAULT_ITEM_OBJECT_PATH;
         } else {
-            // Assume it's a unique bus name
             busName = service;
             objectPath = DEFAULT_ITEM_OBJECT_PATH;
         }
@@ -1636,9 +1752,20 @@ class StatusNotifierWatcher {
         this._extension._onItemUnregistered(uniqueId);
     }
 
-    /**
-     * Update the stored appId for an item (called when TrayItem resolves SNI Id)
-     */
+    // Remove tracking without triggering unregister — used when GNOME Shell
+    // externally disposes a TrayItem (e.g. during suspend).
+    _removeItemTracking(uniqueId) {
+        this._items.delete(uniqueId);
+
+        const signalId = this._nameOwnerChangedIds.get(uniqueId);
+        if (signalId) {
+            Gio.DBus.session.signal_unsubscribe(signalId);
+            this._nameOwnerChangedIds.delete(uniqueId);
+        }
+
+        debug(`Removed tracking for externally destroyed item: ${uniqueId}`);
+    }
+
     updateItemAppId(uniqueId, appId) {
         const itemInfo = this._items.get(uniqueId);
         if (itemInfo) {
@@ -1647,10 +1774,6 @@ class StatusNotifierWatcher {
         }
     }
 
-    /**
-     * D-Bus method: RegisterStatusNotifierHost
-     * We don't support additional hosts
-     */
     RegisterStatusNotifierHostAsync(_params, invocation) {
         invocation.return_dbus_error(
             'org.freedesktop.DBus.Error.NotSupported',
@@ -1658,23 +1781,14 @@ class StatusNotifierWatcher {
         );
     }
 
-    /**
-     * D-Bus property: RegisteredStatusNotifierItems
-     */
     get RegisteredStatusNotifierItems() {
         return Array.from(this._items.keys());
     }
 
-    /**
-     * D-Bus property: IsStatusNotifierHostRegistered
-     */
     get IsStatusNotifierHostRegistered() {
         return true;
     }
 
-    /**
-     * D-Bus property: ProtocolVersion
-     */
     get ProtocolVersion() {
         return 0;
     }
@@ -1683,6 +1797,15 @@ class StatusNotifierWatcher {
         debug('Destroying StatusNotifierWatcher');
 
         this._cancellable.cancel();
+
+        if (this._healthCheckTimeoutId) {
+            GLib.source_remove(this._healthCheckTimeoutId);
+            this._healthCheckTimeoutId = 0;
+        }
+
+        for (const id of this._pendingDelayIds)
+            GLib.source_remove(id);
+        this._pendingDelayIds.clear();
 
         try {
             this._dbusImpl.emit_signal('StatusNotifierHostUnregistered', null);
@@ -1704,12 +1827,6 @@ class StatusNotifierWatcher {
     }
 }
 
-/**
- * StatusTrayExtension - Main extension class
- *
- * Provides its own StatusNotifierWatcher and creates
- * TrayItem instances for each registered item.
- */
 export default class StatusTrayExtension extends Extension {
     enable() {
         debug('Extension enabling...');
@@ -1736,6 +1853,10 @@ export default class StatusTrayExtension extends Extension {
             'changed::icon-effect-overrides', () => {
                 debug('icon-effect-overrides setting changed');
                 this._refreshIconStyles();
+            },
+            'changed::icon-fallback-overrides', () => {
+                debug('icon-fallback-overrides setting changed');
+                this._refreshIcons();
             },
             'changed::app-order', () => {
                 debug('app-order setting changed');
@@ -1766,20 +1887,17 @@ export default class StatusTrayExtension extends Extension {
         this._settings = null;
 
         for (const [key, item] of this._items) {
+            item._destroyedInternally = true;
             item.destroy();
         }
         this._items.clear();
 
-        // Clean up module-level cached objects
         _sniInterfaceInfo = null;
         _interfaceSettings = null;
 
         debug('Extension disabled');
     }
 
-    /**
-     * Called by the watcher when an item is registered
-     */
     _onItemRegistered(uniqueId, busName, objectPath) {
         debug(`Item registered: ${uniqueId}`);
 
@@ -1812,6 +1930,19 @@ export default class StatusTrayExtension extends Extension {
             this._scheduleReorder();
         });
 
+        // Detect when GNOME Shell externally disposes the TrayItem (e.g. during
+        // suspend/resume). Clean up our references so we don't later try to
+        // call methods on a disposed GObject. Internal destroys (from our own
+        // code) set _destroyedInternally first so we can skip them here.
+        trayItem.connect('destroy', () => {
+            if (!trayItem._destroyedInternally && this._items.has(uniqueId)) {
+                debug(`TrayItem externally destroyed: ${uniqueId}`);
+                this._items.delete(uniqueId);
+                if (this._watcher)
+                    this._watcher._removeItemTracking(uniqueId);
+            }
+        });
+
         const appId = storedAppId || extractedAppId;
         const position = this._calculatePosition(appId);
 
@@ -1819,23 +1950,22 @@ export default class StatusTrayExtension extends Extension {
         debug(`Added TrayItem: ${uniqueId} at position ${position}`);
     }
 
-    /**
-     * Called by the watcher when an item is unregistered
-     */
     _onItemUnregistered(uniqueId) {
         debug(`Item unregistered: ${uniqueId}`);
 
         const trayItem = this._items.get(uniqueId);
-        if (trayItem) {
-            trayItem.destroy();
-            this._items.delete(uniqueId);
-            debug(`Removed TrayItem: ${uniqueId}`);
+        if (!trayItem) {
+            // Already cleaned up (e.g. by the destroy signal handler)
+            debug(`Item ${uniqueId} already removed`);
+            return;
         }
+
+        this._items.delete(uniqueId);
+        trayItem._destroyedInternally = true;
+        trayItem.destroy();
+        debug(`Removed TrayItem: ${uniqueId}`);
     }
 
-    /**
-     * Refresh all items based on current disabled-apps setting
-     */
     _refreshItems() {
         const disabledApps = this._settings.get_strv('disabled-apps');
 
@@ -1846,6 +1976,7 @@ export default class StatusTrayExtension extends Extension {
                 if (this._watcher) {
                     this._watcher.updateItemAppId(key, appId);
                 }
+                item._destroyedInternally = true;
                 item.destroy();
                 this._items.delete(key);
             }
@@ -1868,27 +1999,18 @@ export default class StatusTrayExtension extends Extension {
             this._scheduleReorder();
     }
 
-    /**
-     * Refresh icon styles on all items (when icon-mode changes)
-     */
     _refreshIconStyles() {
         for (const [key, item] of this._items) {
             item._applySymbolicStyle();
         }
     }
 
-    /**
-     * Refresh icons on all items (when icon-overrides changes)
-     */
     _refreshIcons() {
         for (const [key, item] of this._items) {
             item._updateIcon();
         }
     }
 
-    /**
-     * Schedule a debounced reorder of tray items
-     */
     _scheduleReorder() {
         if (this._reorderTimeoutId)
             GLib.source_remove(this._reorderTimeoutId);
@@ -1900,9 +2022,6 @@ export default class StatusTrayExtension extends Extension {
         });
     }
 
-    /**
-     * Extract app ID from item key for settings matching
-     */
     _extractAppId(key) {
         // Key format: "busName/objectPath" or "busName"
         // Try to get meaningful ID from object path
@@ -1960,7 +2079,6 @@ export default class StatusTrayExtension extends Extension {
 
         debug('_reorderItems called');
 
-        // Collect info from existing items (use their resolved _appId)
         const itemsInfo = [];
         for (const [uniqueId, trayItem] of this._items) {
             const itemData = this._watcher.getItemInfo(uniqueId);
@@ -1974,8 +2092,8 @@ export default class StatusTrayExtension extends Extension {
             }
         }
 
-        // Destroy all current items
         for (const [key, item] of this._items) {
+            item._destroyedInternally = true;
             item.destroy();
         }
         this._items.clear();
@@ -2004,6 +2122,15 @@ export default class StatusTrayExtension extends Extension {
             trayItem.connect('appid-resolved', (item, resolvedAppId) => {
                 if (this._watcher) {
                     this._watcher.updateItemAppId(uniqueId, resolvedAppId);
+                }
+            });
+
+            trayItem.connect('destroy', () => {
+                if (!trayItem._destroyedInternally && this._items.has(uniqueId)) {
+                    debug(`TrayItem externally destroyed: ${uniqueId}`);
+                    this._items.delete(uniqueId);
+                    if (this._watcher)
+                        this._watcher._removeItemTracking(uniqueId);
                 }
             });
 

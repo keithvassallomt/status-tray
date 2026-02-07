@@ -32,5 +32,11 @@
       <description>Map of app IDs to JSON-encoded effect parameters. Each value is a JSON object with: desaturation (0-1), brightness (-1 to 1), contrast (0-2), useTint (boolean), tintColor ([r,g,b] 0-1 each).</description>
     </key>
 
+    <key name="icon-fallback-overrides" type="as">
+      <default>[]</default>
+      <summary>Fallback-only icon overrides</summary>
+      <description>List of app IDs whose icon overrides are only used when the app sends a pixbuf or no icon.</description>
+    </key>
+
   </schema>
 </schemalist>
