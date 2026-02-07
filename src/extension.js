@@ -36,7 +36,7 @@ function debug(msg) {
     }
 }
 
-function iconExistsInTheme(iconName) {
+function findIconInTheme(iconName) {
     try {
         const themeName = St.Settings.get().gtk_icon_theme;
         const dataDirs = GLib.get_system_data_dirs();
@@ -56,17 +56,18 @@ function iconExistsInTheme(iconName) {
             for (const theme of themes) {
                 for (const subdir of subdirs) {
                     for (const ext of exts) {
-                        if (GLib.file_test(`${baseDir}/${theme}/${subdir}/${iconName}${ext}`, GLib.FileTest.EXISTS))
-                            return true;
+                        const path = `${baseDir}/${theme}/${subdir}/${iconName}${ext}`;
+                        if (GLib.file_test(path, GLib.FileTest.EXISTS))
+                            return path;
                     }
                 }
             }
         }
 
-        return false;
+        return null;
     } catch (e) {
         debug(`Error checking icon existence: ${e.message}`);
-        return false;
+        return null;
     }
 }
 
@@ -562,18 +563,14 @@ const TrayItem = GObject.registerClass({
                         debug(`Got IconPixmap for sandboxed app`);
                         this._setIconFromPixmap(variant);
                     } else {
-                        debug(`No IconPixmap available, using system theme for: ${iconName}`);
-                        this._icon.set_icon_name(iconName);
-                        this._clearIconExcept('icon_name');
-                        this._applySymbolicStyle();
+                        debug(`No IconPixmap available, falling back for: ${iconName}`);
+                        this._setIconFromThemeFile(iconName);
                     }
                 } catch (e) {
                     if (!e.message?.includes('CANCELLED')) {
                         debug(`IconPixmap failed for sandboxed app: ${e.message}`);
-                        debug(`Falling back to system theme for: ${iconName}`);
-                        this._icon.set_icon_name(iconName);
-                        this._clearIconExcept('icon_name');
-                        this._applySymbolicStyle();
+                        debug(`Falling back for: ${iconName}`);
+                        this._setIconFromThemeFile(iconName);
                     }
                 }
             }
@@ -828,10 +825,12 @@ const TrayItem = GObject.registerClass({
 
             // Try Flatpak app ID as icon name before falling to pixmap
             const flatpakId = extractFlatpakAppId(this._iconThemePath);
-            if (flatpakId && iconExistsInTheme(flatpakId)) {
-                debug(`Using Flatpak app icon: ${flatpakId}`);
-                this._icon.set_icon_name(flatpakId);
-                this._clearIconExcept('icon_name');
+            const flatpakIconPath = flatpakId ? findIconInTheme(flatpakId) : null;
+            if (flatpakIconPath) {
+                debug(`Using Flatpak app icon: ${flatpakId} (${flatpakIconPath})`);
+                const file = Gio.File.new_for_path(flatpakIconPath);
+                this._icon.set_gicon(new Gio.FileIcon({ file }));
+                this._clearIconExcept('gicon');
                 this._applySymbolicStyle();
                 return;
             }
@@ -841,19 +840,23 @@ const TrayItem = GObject.registerClass({
             return;
         }
 
-        if (iconExistsInTheme(iconName)) {
-            debug(`Using system icon theme lookup for: ${iconName}`);
-            this._icon.set_icon_name(iconName);
-            this._clearIconExcept('icon_name');
+        const iconPath = findIconInTheme(iconName);
+        if (iconPath) {
+            debug(`Using icon file from theme: ${iconPath}`);
+            const file = Gio.File.new_for_path(iconPath);
+            this._icon.set_gicon(new Gio.FileIcon({ file }));
+            this._clearIconExcept('gicon');
             this._applySymbolicStyle();
         } else {
             // Try Flatpak app ID as icon name before falling to pixmap
             if (this._iconThemePath) {
                 const flatpakId = extractFlatpakAppId(this._iconThemePath);
-                if (flatpakId && iconExistsInTheme(flatpakId)) {
-                    debug(`Using Flatpak app icon: ${flatpakId}`);
-                    this._icon.set_icon_name(flatpakId);
-                    this._clearIconExcept('icon_name');
+                const flatpakIconPath2 = flatpakId ? findIconInTheme(flatpakId) : null;
+                if (flatpakIconPath2) {
+                    debug(`Using Flatpak app icon: ${flatpakId} (${flatpakIconPath2})`);
+                    const file = Gio.File.new_for_path(flatpakIconPath2);
+                    this._icon.set_gicon(new Gio.FileIcon({ file }));
+                    this._clearIconExcept('gicon');
                     this._applySymbolicStyle();
                     return;
                 }
@@ -875,6 +878,24 @@ const TrayItem = GObject.registerClass({
             this._icon.icon_name = null;
         if (activeSource === 'icon_name')
             this._icon.set_size(-1, -1);
+    }
+
+    // Last-resort icon setter: tries to load the icon file directly from
+    // the theme directory, bypassing the GTK icon theme engine.  Falls back
+    // to set_icon_name() if the file isn't found on disk.
+    _setIconFromThemeFile(iconName) {
+        const iconPath = findIconInTheme(iconName);
+        if (iconPath) {
+            debug(`Fallback: using icon file from theme: ${iconPath}`);
+            const file = Gio.File.new_for_path(iconPath);
+            this._icon.set_gicon(new Gio.FileIcon({ file }));
+            this._clearIconExcept('gicon');
+        } else {
+            debug(`Fallback: icon ${iconName} not found on disk, using icon_name`);
+            this._icon.set_icon_name(iconName);
+            this._clearIconExcept('icon_name');
+        }
+        this._applySymbolicStyle();
     }
 
     _applySymbolicStyle() {
