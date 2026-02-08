@@ -47,13 +47,13 @@ elif [ -d "$TARGET_DIR" ]; then
     rm -rf "$TARGET_DIR"
 fi
 
-# Check if --copy flag was passed
-if [ "$1" == "--copy" ]; then
-    echo "Installing (copy mode)..."
-    cp -r "$SRC_DIR" "$TARGET_DIR"
-else
+# Check if --symlink flag was passed
+if [ "$1" == "--symlink" ]; then
     echo "Installing (symlink mode for development)..."
     ln -s "$SRC_DIR" "$TARGET_DIR"
+else
+    echo "Installing (copy mode)..."
+    cp -r "$SRC_DIR" "$TARGET_DIR"
 fi
 
 echo ""

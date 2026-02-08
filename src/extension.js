@@ -1617,8 +1617,7 @@ class StatusNotifierWatcher {
             if (!pid) return false;
 
             const cgroupFile = Gio.File.new_for_path(`/proc/${pid}/cgroup`);
-            const [ok, contents] = cgroupFile.load_contents(null);
-            if (!ok) return false;
+            const [contents] = await cgroupFile.load_contents_async(this._cancellable);
 
             const cgroupText = new TextDecoder().decode(contents);
             if (!cgroupText.includes('app-flatpak-')) {
