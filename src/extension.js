@@ -26,7 +26,7 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const DEBUG = true;
+const DEBUG = false;
 const FALLBACK_ICON_NAME = 'image-loading-symbolic';
 const PIXMAPS_FORMAT = Cogl.PixelFormat.ARGB_8888;
 
@@ -36,9 +36,16 @@ function debug(msg) {
     }
 }
 
+// Cached theme inheritance chain — resolved once, cleared in disable().
+let _themeChainCache = null;
+
 // Resolve the full theme inheritance chain by reading Inherits= from
 // each theme's index.theme.  Returns a deduped ordered list of theme names.
+// Result is cached so index.theme files are only read once per session.
 function _resolveThemeChain(themeName, iconDirs) {
+    if (_themeChainCache)
+        return _themeChainCache;
+
     const visited = new Set();
     const chain = [];
     const queue = [themeName];
@@ -76,6 +83,8 @@ function _resolveThemeChain(themeName, iconDirs) {
     // Always include hicolor as ultimate fallback
     if (!visited.has('hicolor'))
         chain.push('hicolor');
+
+    _themeChainCache = chain;
     return chain;
 }
 
@@ -1991,6 +2000,7 @@ export default class StatusTrayExtension extends Extension {
 
         _sniInterfaceInfo = null;
         _interfaceSettings = null;
+        _themeChainCache = null;
 
         debug('Extension disabled');
     }

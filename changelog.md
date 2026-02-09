@@ -4,6 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2] - 2026-02-09
+
+### Fixed
+- Fixed icons going blank when an app updates its icon to a standard system icon name. The icon theme search now correctly follows theme inheritance and covers all icon categories.
+
 ## [1.1] - 2026-02-07
 
 ### Added
