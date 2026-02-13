@@ -2034,7 +2034,7 @@ export default class StatusTrayExtension extends Extension {
         trayItem.connect('appid-resolved', (item, resolvedAppId) => {
             if (this._watcher)
                 this._watcher.updateItemAppId(uniqueId, resolvedAppId);
-            this._scheduleReorder();
+            this._refreshItems();
         });
 
         // Detect when GNOME Shell externally disposes the TrayItem (e.g. during
