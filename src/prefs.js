@@ -41,7 +41,7 @@ function extractFlatpakAppId(iconThemePath) {
 
 const AppRow = GObject.registerClass(
 class AppRow extends Adw.ActionRow {
-    _init(appId, busName, objectPath, settings, window, onReorder) {
+    _init(appId, busName, objectPath, settings, window, onReorder, rebuildAppsGroup) {
         super._init({
             title: appId,  // Will be updated async with display name
             subtitle: appId,
@@ -53,6 +53,7 @@ class AppRow extends Adw.ActionRow {
         this._settings = settings;
         this._window = window;
         this._onReorder = onReorder;
+        this._rebuildAppsGroup = rebuildAppsGroup;
         this._displayName = appId;
         this._currentIconName = null;
         this._iconThemePath = null;
@@ -259,6 +260,16 @@ class AppRow extends Adw.ActionRow {
             if (newAppId && newAppId !== oldAppId) {
                 this._appId = newAppId;
                 this.set_subtitle(newAppId);  // Update subtitle to show stable ID
+                const appOrder = this._settings.get_strv('app-order');
+                if (appOrder.includes(newAppId)) {
+                    appOrder.splice(appOrder.indexOf(oldAppId), 1);
+                } else if (appOrder.includes(oldAppId)) {
+                    appOrder[appOrder.indexOf(oldAppId)] = newAppId;
+                }
+                this._settings.set_strv('app-order', appOrder);
+                const disabledApps = this._settings.get_strv('disabled-apps');
+                this._switch.set_active(!disabledApps.includes(this._appId));
+                this._rebuildAppsGroup();
                 debug(`Updated appId from ${oldAppId} to ${this._appId}`);
             }
 
@@ -1523,7 +1534,8 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         const row = new AppRow(
             appId, busName, objectPath, this._settings, this._window,
-            (draggedId, targetId) => this._handleReorder(draggedId, targetId)
+            (draggedId, targetId) => this._handleReorder(draggedId, targetId),
+            () => this._rebuildAppsGroup()
         );
         this._appRows.set(appId, row);
         this._appsGroup.add(row);
@@ -1610,7 +1622,8 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
                 const { busName, objectPath } = appIds.get(appId);
                 const row = new AppRow(
                     appId, busName, objectPath, this._settings, this._window,
-                    (draggedId, targetId) => this._handleReorder(draggedId, targetId)
+                    (draggedId, targetId) => this._handleReorder(draggedId, targetId),
+                    () => this._rebuildAppsGroup()
                 );
                 this._appRows.set(appId, row);
                 this._appsGroup.add(row);
