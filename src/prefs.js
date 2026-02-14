@@ -262,7 +262,9 @@ class AppRow extends Adw.ActionRow {
                 this.set_subtitle(newAppId);  // Update subtitle to show stable ID
                 const appOrder = this._settings.get_strv('app-order');
                 if (appOrder.includes(newAppId)) {
-                    appOrder.splice(appOrder.indexOf(oldAppId), 1);
+                    const oldIdx = appOrder.indexOf(oldAppId);
+                    if (oldIdx !== -1)
+                        appOrder.splice(oldIdx, 1);
                 } else if (appOrder.includes(oldAppId)) {
                     appOrder[appOrder.indexOf(oldAppId)] = newAppId;
                 }
