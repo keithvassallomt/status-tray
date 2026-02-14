@@ -418,6 +418,7 @@ const TrayItem = GObject.registerClass({
     _updateIcon() {
         debug(`_updateIcon called for ${this._busName}`);
 
+        this._usingOverrideIcon = false;
         this._fallbackOverrideIcon = null;
         if (this._settings) {
             try {
@@ -437,6 +438,7 @@ const TrayItem = GObject.registerClass({
                         debug(`Fallback override stored for ${this._appId}: ${overrideIcon}`);
                     } else {
                         debug(`Using icon override for ${this._appId}: ${overrideIcon}`);
+                        this._usingOverrideIcon = true;
                         this._replaceIcon(overrideIcon);
                         this._applySymbolicStyle();
                         return;
@@ -2141,8 +2143,14 @@ export default class StatusTrayExtension extends Extension {
     }
 
     _refreshIcons() {
+        const overrides = this._settings.get_value('icon-overrides').deep_unpack();
         for (const [key, item] of this._items) {
-            item._updateIcon();
+            // Only update items that have an override or were previously
+            // showing one (override removed).  Re-running _updateIcon on
+            // unrelated items can cause stale IconThemePath lookups to fail
+            // (especially for Electron/Flatpak apps with temp directories).
+            if (overrides[item._appId] || item._usingOverrideIcon)
+                item._updateIcon();
         }
     }
 

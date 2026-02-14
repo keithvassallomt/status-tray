@@ -9,6 +9,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Fixed disabled apps reappearing after logout/reboot due to async app ID resolution. Thanks to [@noahajac](https://github.com/noahajac) for the contribution.
 - Fixed app order and enable status not persisting in preferences when app IDs resolve asynchronously. Thanks to [@noahajac](https://github.com/noahajac) for the contribution.
+- Fixed symbolic icon overrides rendering invisible (black on black) instead of being recoloured to match the panel theme. Thanks to [@somePaulo](https://github.com/somePaulo) for the report.
+- Fixed changing an icon override for one app corrupting icons of other apps (especially Electron/Flatpak apps) due to stale IconThemePath lookups.
 
 ## [1.2] - 2026-02-09
 
