@@ -4,6 +4,12 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- Fixed disabled apps reappearing after logout/reboot due to async app ID resolution. Thanks to [@noahajac](https://github.com/noahajac) for the contribution.
+- Fixed app order and enable status not persisting in preferences when app IDs resolve asynchronously. Thanks to [@noahajac](https://github.com/noahajac) for the contribution.
+
 ## [1.2] - 2026-02-09
 
 ### Fixed

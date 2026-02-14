@@ -437,14 +437,7 @@ const TrayItem = GObject.registerClass({
                         debug(`Fallback override stored for ${this._appId}: ${overrideIcon}`);
                     } else {
                         debug(`Using icon override for ${this._appId}: ${overrideIcon}`);
-                        if (overrideIcon.startsWith('/')) {
-                            const file = Gio.File.new_for_path(overrideIcon);
-                            this._icon.set_gicon(new Gio.FileIcon({ file }));
-                            this._clearIconExcept('gicon');
-                        } else {
-                            this._icon.set_icon_name(overrideIcon);
-                            this._clearIconExcept('icon_name');
-                        }
+                        this._replaceIcon(overrideIcon);
                         this._applySymbolicStyle();
                         return;
                     }
@@ -923,14 +916,36 @@ const TrayItem = GObject.registerClass({
     // This prevents ghost artifacts from previous icon modes without
     // causing a blank frame by clearing the active source first.
     _clearIconExcept(activeSource) {
-        if (activeSource !== 'content')
+        if (activeSource !== 'content') {
             this._icon.content = null;
+            this._icon.content_gravity = Clutter.ContentGravity.CENTER;
+        }
         if (activeSource !== 'gicon')
             this._icon.gicon = null;
         if (activeSource !== 'icon_name')
             this._icon.icon_name = null;
         if (activeSource === 'icon_name')
             this._icon.set_size(-1, -1);
+    }
+
+    // Destroy and recreate the St.Icon widget to guarantee a clean state.
+    // Necessary when switching from pixmap (St.ImageContent) to a named icon,
+    // as residual widget state can prevent the new icon from rendering.
+    _replaceIcon(iconNameOrPath) {
+        this.remove_child(this._icon);
+        if (iconNameOrPath.startsWith('/')) {
+            const file = Gio.File.new_for_path(iconNameOrPath);
+            this._icon = new St.Icon({
+                style_class: 'system-status-icon status-tray-icon',
+                gicon: new Gio.FileIcon({ file }),
+            });
+        } else {
+            this._icon = new St.Icon({
+                style_class: 'system-status-icon status-tray-icon',
+                icon_name: iconNameOrPath,
+            });
+        }
+        this.add_child(this._icon);
     }
 
     // Last-resort icon setter: tries to load the icon file directly from
@@ -959,7 +974,13 @@ const TrayItem = GObject.registerClass({
         // When using icon_name (GTK theme lookup), let St.Icon decide so it
         // can fall back to -symbolic variants for icons like battery-full.
         const usingGicon = this._icon.gicon != null;
-        const iconStyleCss = (usingGicon && !isSymbolicIcon) ? ' -st-icon-style: regular;' : '';
+        let iconStyleCss;
+        if (isSymbolicIcon)
+            iconStyleCss = ' -st-icon-style: symbolic;';
+        else if (usingGicon)
+            iconStyleCss = ' -st-icon-style: regular;';
+        else
+            iconStyleCss = '';
 
         const iconMode = this._settings?.get_string('icon-mode') ?? 'symbolic';
         if (iconMode !== 'symbolic') {
@@ -993,15 +1014,22 @@ const TrayItem = GObject.registerClass({
 
         this._icon.clear_effects();
 
-        if (desaturation > 0) {
-            const desaturate = new Clutter.DesaturateEffect({ factor: desaturation });
-            this._icon.add_effect_with_name('desaturate', desaturate);
-        }
+        // Symbolic icons (e.g. shield-symbolic) are already monochrome and
+        // get recoloured by St.Icon to match the panel theme.  Desaturation
+        // and brightness/contrast effects are designed for full-colour icons
+        // and will make symbolic icons invisible.  Tint is still useful so
+        // we only skip desaturate + brightness/contrast here.
+        if (!isSymbolicIcon) {
+            if (desaturation > 0) {
+                const desaturate = new Clutter.DesaturateEffect({ factor: desaturation });
+                this._icon.add_effect_with_name('desaturate', desaturate);
+            }
 
-        const bc = new Clutter.BrightnessContrastEffect();
-        bc.set_contrast_full(contrast, contrast, contrast);
-        bc.set_brightness_full(brightness, brightness, brightness);
-        this._icon.add_effect_with_name('brightness', bc);
+            const bc = new Clutter.BrightnessContrastEffect();
+            bc.set_contrast_full(contrast, contrast, contrast);
+            bc.set_brightness_full(brightness, brightness, brightness);
+            this._icon.add_effect_with_name('brightness', bc);
+        }
 
         if (useTint && tintColor) {
             try {
