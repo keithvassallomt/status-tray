@@ -99,12 +99,12 @@ This document provides comprehensive technical documentation for developers and 
 ```
 Status Tray/
 ├── src/
-│   ├── extension.js          # Main extension code (1834 lines)
+│   ├── extension.js          # Main extension code (~2270 lines)
 │   │   ├── TrayItem          # Individual tray icon component
 │   │   ├── StatusNotifierWatcher  # D-Bus service implementation
 │   │   └── StatusTrayExtension    # Main controller
 │   │
-│   ├── prefs.js              # Settings UI (1881 lines)
+│   ├── prefs.js              # Settings UI (~1750 lines)
 │   │   ├── AppRow            # Individual app settings row
 │   │   ├── IconPickerDialog  # Icon selection dialog
 │   │   ├── IconEffectDialog  # Effect customization dialog
@@ -164,23 +164,28 @@ new TrayItem(
 |--------|-------------|
 | `_initProxy()` | Initialize D-Bus proxy with interface info |
 | `_updateIcon()` | Fetch and display icon from SNI |
+| `_resolveAppId()` | Determine stable app ID from ToolTip/IconThemePath/SNI Id |
 | `_setIcon(iconName)` | Set icon by theme name |
-| `_setIconFromPath(path)` | Set icon from file path |
 | `_setIconFromPixmap(pixmapData)` | Set icon from ARGB pixel data |
+| `_replaceIcon(iconNameOrPath)` | Destroy and recreate St.Icon widget (used for overrides) |
 | `_applySymbolicStyle()` | Apply Clutter effects for symbolic mode |
+| `_clearIconExcept(activeSource)` | Clear inactive icon sources (content/gicon/icon_name) |
 | `_loadMenu()` | Fetch menu via DBusMenu and display |
 | `_activateMenuItem(itemId)` | Send click event to menu item |
-| `_getEffectiveAppId()` | Get stable app ID for settings |
 | `destroy()` | Clean up all resources and subscriptions |
 
 #### Icon Loading Priority
 
-1. Check `icon-overrides` setting for custom icon
-2. Try `IconName` property from SNI
-3. Try `IconPixmap` property (ARGB pixel data)
-4. For Electron apps: Search `IconThemePath` directories
-5. Look up in system icon theme
-6. Fallback to `image-loading-symbolic` placeholder
+1. Check `icon-overrides` setting for custom icon (uses `_replaceIcon()` to
+   create a fresh `St.Icon`, avoiding stale state from previous pixmap rendering)
+2. If override is fallback-only, store it and continue
+3. Try `IconName` property from SNI proxy cache
+4. If no IconName, use fallback override if set
+5. Try `IconPixmap` property (ARGB pixel data via `St.ImageContent`)
+6. Direct D-Bus fetch of `IconThemePath` → `IconName` → `IconPixmap`
+7. For Flatpak apps: try app ID as icon name (e.g. `org.ferdium.Ferdium`)
+8. Look up in system icon theme via `findIconInTheme()`
+9. Fallback to `image-loading-symbolic` placeholder
 
 ---
 
@@ -254,12 +259,17 @@ Main extension controller. Extends `Extension.Extension`.
 
 ```javascript
 // Setting change handlers
-'changed::disabled-apps'        → _refreshItems()
-'changed::icon-mode'           → _refreshIconStyles()
-'changed::icon-overrides'      → _refreshIcons()
+'changed::disabled-apps'         → _refreshItems()
+'changed::icon-mode'            → _refreshIconStyles()
+'changed::icon-overrides'       → _refreshIcons()  // only updates affected items
 'changed::icon-effect-overrides' → _refreshIconStyles()
-'changed::app-order'           → _reorderItems()
+'changed::app-order'            → _reorderItems()
 ```
+
+**Note**: `_refreshIcons()` only calls `_updateIcon()` on items that have an
+active override or were previously showing one (override just removed). This
+prevents stale `IconThemePath` lookups from corrupting unrelated icons,
+especially for Electron/Flatpak apps with temporary directories.
 
 ---
 
@@ -365,31 +375,33 @@ _argbToRgba(argbData) {
 
 ### Symbolic Style Effects
 
-The symbolic mode uses Clutter effects applied in sequence:
+The symbolic mode uses Clutter effects to make full-colour icons monochrome.
+**Symbolic icons** (names ending in `-symbolic`) are excluded from desaturation
+and brightness/contrast effects, since `St.Icon` already recolours them to
+match the panel theme via `-st-icon-style: symbolic`. Tint is still applied
+if configured.
 
 ```javascript
 _applySymbolicStyle() {
-    const effects = this._getEffectParameters();
+    const isSymbolicIcon = iconName?.endsWith('-symbolic');
 
-    // 1. Desaturation (grayscale conversion)
-    this._icon.add_effect(new Clutter.DesaturateEffect({
-        factor: effects.desaturation  // 0.0 - 1.0
-    }));
+    // Symbolic icons: St.Icon handles recolouring via CSS.
+    // Only apply effects to full-colour (pixmap/raster) icons.
+    if (!isSymbolicIcon) {
+        // 1. Desaturation (grayscale conversion)
+        this._icon.add_effect(new Clutter.DesaturateEffect({
+            factor: desaturation  // 0.0 - 1.0
+        }));
 
-    // 2. Brightness/Contrast adjustment
-    const brightnessEffect = new Clutter.BrightnessContrastEffect();
-    brightnessEffect.set_brightness(effects.brightness);  // -1.0 to 1.0
-    brightnessEffect.set_contrast(effects.contrast);      // 0.0 to 2.0
-    this._icon.add_effect(brightnessEffect);
+        // 2. Brightness/Contrast adjustment
+        const bc = new Clutter.BrightnessContrastEffect();
+        bc.set_brightness(brightness);  // -1.0 to 1.0
+        bc.set_contrast(contrast);      // 0.0 to 2.0
+        this._icon.add_effect(bc);
+    }
 
-    // 3. Optional tint (colorize)
-    if (effects.useTint) {
-        const color = Clutter.Color.new(
-            effects.tintColor[0] * 255,
-            effects.tintColor[1] * 255,
-            effects.tintColor[2] * 255,
-            255
-        );
+    // 3. Optional tint (colorize) — applied to all icon types
+    if (useTint) {
         this._icon.add_effect(new Clutter.ColorizeEffect({ tint: color }));
     }
 }
@@ -501,6 +513,7 @@ _activateMenuItem(itemId) {
 | `icon-mode` | `s` | `'symbolic'` | `'symbolic'` or `'original'` |
 | `app-order` | `as` | `[]` | Custom app ordering |
 | `icon-overrides` | `a{ss}` | `{}` | App ID → icon name/path |
+| `icon-fallback-overrides` | `as` | `[]` | App IDs where override is fallback-only |
 | `icon-effect-overrides` | `a{ss}` | `{}` | App ID → JSON effect config |
 
 ### Effect Override Format
@@ -676,23 +689,20 @@ Known compatible apps for testing:
 
 ### App ID Determination
 
-The extension needs stable app IDs for settings persistence:
+The extension needs stable app IDs for settings persistence. The initial ID
+is extracted from the bus name/object path, then `_resolveAppId()` upgrades
+it asynchronously using a priority chain:
 
 ```javascript
-_getEffectiveAppId() {
-    // 1. Prefer SNI Id property (most stable)
-    const sniId = this._proxy?.Id;
-    if (sniId && sniId.trim()) {
-        return sniId;
-    }
+_resolveAppId() {
+    // Priority order:
+    // 1. ToolTip title (best for Electron apps, e.g. "Bitwarden")
+    // 2. Flatpak app ID from IconThemePath (e.g. "org.ferdium.Ferdium")
+    // 3. SNI Id (if not generic like "chrome_status_icon_N")
+    // 4. Keep initial fallback from object path / bus name
 
-    // 2. Fall back to bus name (may change between runs)
-    // Strip leading ':' from unique names
-    if (this._busName.startsWith(':')) {
-        return this._busName.slice(1);
-    }
-
-    return this._busName;
+    // When resolved, emits 'appid-resolved' signal which triggers
+    // _refreshItems() to re-check disabled state and reorder.
 }
 ```
 
