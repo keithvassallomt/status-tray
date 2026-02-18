@@ -332,6 +332,16 @@ const TrayItem = GObject.registerClass({
                 debug(`Properties changed for ${this._busName}: ${props.join(', ')}`);
 
                 if (props.some(p => p.startsWith('Icon'))) {
+                    // If the user locked the override, ignore property changes
+                    try {
+                        const lockApps = this._settings.get_strv('icon-lock-overrides');
+                        if (lockApps.includes(this._appId)) {
+                            debug(`Ignoring Icon property change for ${this._appId}: override is locked`);
+                            return;
+                        }
+                    } catch (e) {
+                        // Key may not exist in older schema versions
+                    }
                     this._updateIcon();
                 }
             });
@@ -359,9 +369,9 @@ const TrayItem = GObject.registerClass({
         }
 
         // Resolve app ID using priority order:
-        // 1. ToolTip title (best for Electron apps)
+        // 1. SNI Id (stable across sessions, unless generic chrome_status_icon_*)
         // 2. Flatpak app ID from IconThemePath
-        // 3. SNI Id (if not generic chrome_status_icon_*)
+        // 3. ToolTip title (fallback for Electron apps with generic SNI Ids)
         // 4. Keep existing fallback from object path
         this._resolveAppId();
 
@@ -372,18 +382,13 @@ const TrayItem = GObject.registerClass({
         const oldAppId = this._appId;
         let newAppId = null;
 
-        // Try ToolTip title first (most reliable for Electron apps)
-        const toolTipVariant = this._proxy.get_cached_property('ToolTip');
-        if (toolTipVariant) {
-            try {
-                const toolTip = toolTipVariant.deep_unpack();
-                // ToolTip is (sa(iiay)ss): icon_name, icon_pixmap, title, description
-                if (toolTip && toolTip.length >= 3 && toolTip[2] && toolTip[2].length > 0) {
-                    newAppId = toolTip[2];
-                    debug(`Got app ID from ToolTip title: ${newAppId}`);
-                }
-            } catch (e) {
-                debug(`Failed to parse ToolTip: ${e.message}`);
+        // Try SNI Id first (stable across sessions for most apps)
+        const idVariant = this._proxy.get_cached_property('Id');
+        if (idVariant) {
+            const sniId = idVariant.deep_unpack();
+            if (sniId && sniId.length > 0 && !sniId.startsWith(':') && !sniId.startsWith('chrome_status_icon_')) {
+                newAppId = sniId;
+                debug(`Got app ID from SNI Id: ${newAppId}`);
             }
         }
 
@@ -396,14 +401,19 @@ const TrayItem = GObject.registerClass({
             }
         }
 
-        // Try SNI Id (but skip generic chrome_status_icon_* names)
+        // Try ToolTip title as fallback (useful for Electron apps with generic SNI Ids)
         if (!newAppId) {
-            const idVariant = this._proxy.get_cached_property('Id');
-            if (idVariant) {
-                const sniId = idVariant.deep_unpack();
-                if (sniId && sniId.length > 0 && !sniId.startsWith(':') && !sniId.startsWith('chrome_status_icon_')) {
-                    newAppId = sniId;
-                    debug(`Got app ID from SNI Id: ${newAppId}`);
+            const toolTipVariant = this._proxy.get_cached_property('ToolTip');
+            if (toolTipVariant) {
+                try {
+                    const toolTip = toolTipVariant.deep_unpack();
+                    // ToolTip is (sa(iiay)ss): icon_name, icon_pixmap, title, description
+                    if (toolTip && toolTip.length >= 3 && toolTip[2] && toolTip[2].length > 0) {
+                        newAppId = toolTip[2];
+                        debug(`Got app ID from ToolTip title: ${newAppId}`);
+                    }
+                } catch (e) {
+                    debug(`Failed to parse ToolTip: ${e.message}`);
                 }
             }
         }
@@ -646,6 +656,18 @@ const TrayItem = GObject.registerClass({
             Gio.DBusSignalFlags.NONE,
             () => {
                 debug(`NewIcon signal for ${this._busName}`);
+
+                // If the user locked the override, ignore the app's icon change
+                try {
+                    const lockApps = this._settings.get_strv('icon-lock-overrides');
+                    if (lockApps.includes(this._appId)) {
+                        debug(`Ignoring NewIcon for ${this._appId}: override is locked`);
+                        return;
+                    }
+                } catch (e) {
+                    // Key may not exist in older schema versions
+                }
+
                 // Refetch icon directly from D-Bus rather than invalidating
                 // the proxy cache first — invalidating causes _updateIcon to
                 // see empty cache and take the slow async path, which creates
@@ -1372,6 +1394,16 @@ const TrayItem = GObject.registerClass({
             menuItem.setSensitive(false);
         }
 
+        const toggleType = properties['toggle-type']?.deep_unpack() || '';
+        const toggleState = properties['toggle-state']?.deep_unpack() ?? -1;
+        if (toggleType === 'checkmark') {
+            menuItem.setOrnament(toggleState === 1
+                ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+        } else if (toggleType === 'radio') {
+            menuItem.setOrnament(toggleState === 1
+                ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE);
+        }
+
         menuItem.connect('activate', () => {
             this._activateMenuItem(itemId, label);
         });
@@ -1406,6 +1438,16 @@ const TrayItem = GObject.registerClass({
         const menuItem = new PopupMenu.PopupMenuItem(label);
         if (!enabled) {
             menuItem.setSensitive(false);
+        }
+
+        const toggleType = properties['toggle-type']?.deep_unpack() || '';
+        const toggleState = properties['toggle-state']?.deep_unpack() ?? -1;
+        if (toggleType === 'checkmark') {
+            menuItem.setOrnament(toggleState === 1
+                ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+        } else if (toggleType === 'radio') {
+            menuItem.setOrnament(toggleState === 1
+                ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE);
         }
 
         menuItem.connect('activate', () => {

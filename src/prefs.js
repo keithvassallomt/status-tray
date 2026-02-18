@@ -45,6 +45,7 @@ class AppRow extends Adw.ActionRow {
         super._init({
             title: appId,  // Will be updated async with display name
             subtitle: appId,
+            subtitle_lines: 1,
         });
 
         this._appId = appId;
@@ -117,7 +118,7 @@ class AppRow extends Adw.ActionRow {
             actions: Gdk.DragAction.MOVE,
         });
 
-        dragSource.connect('prepare', (source, x, y) => {
+        dragSource.connect('prepare', (_source, x, y) => {
             debug(`[DnD] prepare for ${this._appId} at (${x}, ${y})`);
             _draggedRow = this;
             const provider = Gdk.ContentProvider.new_for_value('app-row-drag');
@@ -125,20 +126,20 @@ class AppRow extends Adw.ActionRow {
             return provider;
         });
 
-        dragSource.connect('drag-begin', (source, drag) => {
+        dragSource.connect('drag-begin', (source, _drag) => {
             debug(`[DnD] drag-begin for ${this._appId}`);
             const paintable = new Gtk.WidgetPaintable({ widget: this });
             source.set_icon(paintable, 0, 0);
             this.add_css_class('drag-active');
         });
 
-        dragSource.connect('drag-end', (source, drag, deleteData) => {
+        dragSource.connect('drag-end', (_source, _drag, deleteData) => {
             debug(`[DnD] drag-end for ${this._appId}, deleteData=${deleteData}`);
             this.remove_css_class('drag-active');
             _draggedRow = null;
         });
 
-        dragSource.connect('drag-cancel', (source, drag, reason) => {
+        dragSource.connect('drag-cancel', (_source, _drag, reason) => {
             debug(`[DnD] drag-cancel for ${this._appId}, reason=${reason}`);
             return false;
         });
@@ -148,24 +149,24 @@ class AppRow extends Adw.ActionRow {
         debug(`[DnD] Creating DropTarget for ${this._appId}`);
         const dropTarget = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE);
 
-        dropTarget.connect('accept', (target, drop) => {
+        dropTarget.connect('accept', (_target, _drop) => {
             const dominated = _draggedRow && _draggedRow !== this;
             debug(`[DnD] accept on ${this._appId}: _draggedRow=${_draggedRow?._appId}, dominated=${dominated}`);
             return dominated;
         });
 
-        dropTarget.connect('enter', (target, x, y) => {
+        dropTarget.connect('enter', (_target, x, y) => {
             debug(`[DnD] enter on ${this._appId} at (${x}, ${y})`);
             this.add_css_class('drop-target');
             return Gdk.DragAction.MOVE;
         });
 
-        dropTarget.connect('leave', (target) => {
+        dropTarget.connect('leave', (_target) => {
             debug(`[DnD] leave on ${this._appId}`);
             this.remove_css_class('drop-target');
         });
 
-        dropTarget.connect('drop', (target, value, x, y) => {
+        dropTarget.connect('drop', (_target, value, _x, _y) => {
             debug(`[DnD] DROP on ${this._appId}! value="${value}", type=${typeof value}`);
             debug(`[DnD] _draggedRow=${_draggedRow?._appId}`);
 
@@ -234,16 +235,16 @@ class AppRow extends Adw.ActionRow {
             }
 
             // Resolve app ID using priority order (same as extension.js):
-            // 1. ToolTip title (best for Electron apps like Ferdium, Bitwarden)
+            // 1. SNI Id (stable across sessions, unless generic chrome_status_icon_*)
             // 2. Flatpak app ID from IconThemePath
-            // 3. SNI Id (if not generic chrome_status_icon_*)
+            // 3. ToolTip title (fallback for Electron apps with generic SNI Ids)
             // 4. Keep existing fallback from object path
             const oldAppId = this._appId;
             let newAppId = null;
 
-            if (toolTipTitle && toolTipTitle.length > 0) {
-                newAppId = toolTipTitle;
-                debug(`Got app ID from ToolTip title: ${newAppId}`);
+            if (id && id.length > 0 && !id.startsWith(':') && !id.startsWith('chrome_status_icon_')) {
+                newAppId = id;
+                debug(`Got app ID from SNI Id: ${newAppId}`);
             } else if (this._iconThemePath) {
                 const flatpakId = extractFlatpakAppId(this._iconThemePath);
                 if (flatpakId) {
@@ -252,9 +253,9 @@ class AppRow extends Adw.ActionRow {
                 }
             }
 
-            if (!newAppId && id && id.length > 0 && !id.startsWith(':') && !id.startsWith('chrome_status_icon_')) {
-                newAppId = id;
-                debug(`Got app ID from SNI Id: ${newAppId}`);
+            if (!newAppId && toolTipTitle && toolTipTitle.length > 0) {
+                newAppId = toolTipTitle;
+                debug(`Got app ID from ToolTip title: ${newAppId}`);
             }
 
             if (newAppId && newAppId !== oldAppId) {
@@ -469,7 +470,7 @@ class AppRow extends Adw.ActionRow {
     }
 
     _dbusGetProperty(bus, propertyName) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve, _reject) => {
             bus.call(
                 this._busName,
                 this._objectPath,
@@ -519,7 +520,7 @@ class AppRow extends Adw.ActionRow {
             this._settings,
             this._window
         );
-        dialog.connect('icon-selected', (dlg, iconName) => {
+        dialog.connect('icon-selected', (_dlg, _iconName) => {
             this._updateIcon();
         });
         dialog.present(this._window);
@@ -547,7 +548,7 @@ const IconPickerDialog = GObject.registerClass({
         super._init({
             title: `Icon for ${displayName}`,
             content_width: 450,
-            content_height: 550,
+            content_height: 700,
         });
 
         this._appId = appId;
@@ -612,6 +613,36 @@ const IconPickerDialog = GObject.registerClass({
                 apps.splice(index, 1);
             }
             this._settings.set_strv('icon-fallback-overrides', apps);
+
+            // Lock is incompatible with fallback — disable it when fallback is on
+            if (this._fallbackRow.get_active()) {
+                this._lockRow.set_active(false);
+                this._lockRow.set_sensitive(false);
+            } else {
+                this._lockRow.set_sensitive(true);
+            }
+        });
+
+        const lockApps = settings.get_strv('icon-lock-overrides');
+        this._lockRow = new Adw.SwitchRow({
+            title: 'Ignore App Status Icons',
+            subtitle: 'Keep the chosen icon even when the app changes its status icon',
+        });
+        this._lockRow.set_active(lockApps.includes(appId));
+        // Disable lock when fallback is active
+        if (this._fallbackRow.get_active())
+            this._lockRow.set_sensitive(false);
+        previewGroup.add(this._lockRow);
+
+        this._lockRow.connect('notify::active', () => {
+            const apps = this._settings.get_strv('icon-lock-overrides');
+            const index = apps.indexOf(this._appId);
+            if (this._lockRow.get_active() && index === -1) {
+                apps.push(this._appId);
+            } else if (!this._lockRow.get_active() && index > -1) {
+                apps.splice(index, 1);
+            }
+            this._settings.set_strv('icon-lock-overrides', apps);
         });
 
         const filterBox = new Gtk.Box({
@@ -667,7 +698,7 @@ const IconPickerDialog = GObject.registerClass({
             this._populateIconGrid(searchEntry.get_text(), this._categoryDropdown.selected);
         });
 
-        this._iconGrid.connect('child-activated', (grid, child) => {
+        this._iconGrid.connect('child-activated', (_grid, child) => {
             const image = child.get_child();
             const iconName = image._iconName;
             if (iconName) {
@@ -877,6 +908,16 @@ const IconPickerDialog = GObject.registerClass({
 
         this._fallbackRow.set_active(false);
         this._fallbackRow.set_visible(false);
+
+        const lockApps = this._settings.get_strv('icon-lock-overrides');
+        const lockIndex = lockApps.indexOf(this._appId);
+        if (lockIndex > -1) {
+            lockApps.splice(lockIndex, 1);
+            this._settings.set_strv('icon-lock-overrides', lockApps);
+        }
+
+        this._lockRow.set_active(false);
+        this._lockRow.set_visible(false);
 
         const defaultIcon = this._currentIconName || 'application-x-executable-symbolic';
         this._previewImage.set_from_icon_name(defaultIcon);
@@ -1106,7 +1147,7 @@ const IconEffectDialog = GObject.registerClass({
     }
 
     _dbusGetProperty(bus, propertyName) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve, _reject) => {
             bus.call(
                 this._busName,
                 this._objectPath,
@@ -1379,6 +1420,7 @@ const IconEffectDialog = GObject.registerClass({
 export default class StatusTrayPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         this._window = window;
+        window.set_default_size(890, 750);
         this._settings = this.getSettings();
         this._bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
         this._signalIds = [];
@@ -1496,7 +1538,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             '/StatusNotifierWatcher',
             null,
             Gio.DBusSignalFlags.NONE,
-            (conn, sender, path, iface, signal, params) => {
+            (_conn, _sender, _path, _iface, _signal, params) => {
                 const [itemId] = params.deep_unpack();
                 debug(`SNI registered: ${itemId}`);
                 this._onAppRegistered(itemId);
@@ -1511,7 +1553,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             '/StatusNotifierWatcher',
             null,
             Gio.DBusSignalFlags.NONE,
-            (conn, sender, path, iface, signal, params) => {
+            (_conn, _sender, _path, _iface, _signal, params) => {
                 const [itemId] = params.deep_unpack();
                 debug(`SNI unregistered: ${itemId}`);
                 this._onAppUnregistered(itemId);

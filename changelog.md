@@ -6,11 +6,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- "Ignore App Status Icons" option for icon overrides. When enabled, the chosen icon stays in place regardless of status changes from the app (e.g. Surfshark connected/disconnected, Firewall Applet zone changes). Thanks to [@somePaulo](https://github.com/somePaulo) for the suggestion.
+- Menu checkmark and radio button support. Toggle states in app menus are now rendered correctly. Thanks to [@somePaulo](https://github.com/somePaulo) for the report.
+
 ### Fixed
 - Fixed disabled apps reappearing after logout/reboot due to async app ID resolution. Thanks to [@noahajac](https://github.com/noahajac) for the contribution.
 - Fixed app order and enable status not persisting in preferences when app IDs resolve asynchronously. Thanks to [@noahajac](https://github.com/noahajac) for the contribution.
 - Fixed symbolic icon overrides rendering invisible (black on black) instead of being recoloured to match the panel theme. Thanks to [@somePaulo](https://github.com/somePaulo) for the report.
 - Fixed changing an icon override for one app corrupting icons of other apps (especially Electron/Flatpak apps) due to stale IconThemePath lookups.
+- Fixed app ID resolution using volatile tooltip text instead of stable SNI Id, causing icon overrides to not persist across sessions for apps like Nextcloud and Firewall Applet.
+- Fixed preferences dialog being too small for the new options.
+- Fixed app subtitle in preferences overflowing with long tooltip text; now truncated to one line.
 
 ## [1.2] - 2026-02-09
 

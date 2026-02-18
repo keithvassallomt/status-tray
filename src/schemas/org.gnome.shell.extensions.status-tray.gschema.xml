@@ -38,5 +38,11 @@
       <description>List of app IDs whose icon overrides are only used when the app sends a pixbuf or no icon.</description>
     </key>
 
+    <key name="icon-lock-overrides" type="as">
+      <default>[]</default>
+      <summary>Locked icon overrides</summary>
+      <description>List of app IDs whose icon overrides ignore app status icon changes. When locked, the chosen override stays in place regardless of NewIcon signals from the app.</description>
+    </key>
+
   </schema>
 </schemalist>
