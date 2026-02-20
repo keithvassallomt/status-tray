@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.3] - 2026-02-20
 
 ### Added
 - "Ignore App Status Icons" option for icon overrides. When enabled, the chosen icon stays in place regardless of status changes from the app (e.g. Surfshark connected/disconnected, Firewall Applet zone changes). Thanks to [@somePaulo](https://github.com/somePaulo) for the suggestion.
@@ -18,6 +18,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Fixed app ID resolution using volatile tooltip text instead of stable SNI Id, causing icon overrides to not persist across sessions for apps like Nextcloud and Firewall Applet.
 - Fixed preferences dialog being too small for the new options.
 - Fixed app subtitle in preferences overflowing with long tooltip text; now truncated to one line.
+- Fixed old icon widget not being destroyed when replacing with an override, leaking Clutter effects.
+- Deduplicated menu toggle ornament code into shared helper.
 
 ## [1.2] - 2026-02-09
 
