@@ -5,7 +5,7 @@
   "shell-version": ["45", "46", "47", "48", "49"],
   "url": "https://github.com/keithvassallomt/status-tray",
   "settings-schema": "org.gnome.shell.extensions.status-tray",
-  "version-name": "1.2",
+  "version-name": "1.3",
   "donations": {
     "github": "keithvassallomt"
   }
