@@ -956,7 +956,7 @@ const TrayItem = GObject.registerClass({
     // Necessary when switching from pixmap (St.ImageContent) to a named icon,
     // as residual widget state can prevent the new icon from rendering.
     _replaceIcon(iconNameOrPath) {
-        this.remove_child(this._icon);
+        this._icon.destroy();
         if (iconNameOrPath.startsWith('/')) {
             const file = Gio.File.new_for_path(iconNameOrPath);
             this._icon = new St.Icon({
@@ -1394,15 +1394,7 @@ const TrayItem = GObject.registerClass({
             menuItem.setSensitive(false);
         }
 
-        const toggleType = properties['toggle-type']?.deep_unpack() || '';
-        const toggleState = properties['toggle-state']?.deep_unpack() ?? -1;
-        if (toggleType === 'checkmark') {
-            menuItem.setOrnament(toggleState === 1
-                ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
-        } else if (toggleType === 'radio') {
-            menuItem.setOrnament(toggleState === 1
-                ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE);
-        }
+        this._applyToggleOrnament(menuItem, properties);
 
         menuItem.connect('activate', () => {
             this._activateMenuItem(itemId, label);
@@ -1440,6 +1432,16 @@ const TrayItem = GObject.registerClass({
             menuItem.setSensitive(false);
         }
 
+        this._applyToggleOrnament(menuItem, properties);
+
+        menuItem.connect('activate', () => {
+            this._activateMenuItem(itemId, label);
+        });
+
+        submenu.addMenuItem(menuItem);
+    }
+
+    _applyToggleOrnament(menuItem, properties) {
         const toggleType = properties['toggle-type']?.deep_unpack() || '';
         const toggleState = properties['toggle-state']?.deep_unpack() ?? -1;
         if (toggleType === 'checkmark') {
@@ -1449,12 +1451,6 @@ const TrayItem = GObject.registerClass({
             menuItem.setOrnament(toggleState === 1
                 ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE);
         }
-
-        menuItem.connect('activate', () => {
-            this._activateMenuItem(itemId, label);
-        });
-
-        submenu.addMenuItem(menuItem);
     }
 
     _activateMenuItem(itemId, label) {
