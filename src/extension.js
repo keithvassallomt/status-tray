@@ -2121,8 +2121,14 @@ export default class StatusTrayExtension extends Extension {
         const appId = storedAppId || extractedAppId;
         const position = this._calculatePosition(appId);
 
-        Main.panel.addToStatusArea(`StatusTray-${uniqueId}`, trayItem, position, 'right');
-        debug(`Added TrayItem: ${uniqueId} at position ${position}`);
+        let areaKey = `StatusTray-${appId}`;
+        let counter = 2;
+        while (Main.panel.statusArea[areaKey]) {
+            areaKey = `StatusTray-${appId}-${counter}`;
+            counter++;
+        }
+        Main.panel.addToStatusArea(areaKey, trayItem, position, 'right');
+        debug(`Added TrayItem: ${uniqueId} as ${areaKey} at position ${position}`);
     }
 
     _onItemUnregistered(uniqueId) {

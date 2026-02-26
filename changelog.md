@@ -4,6 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- Fixed panel item identifiers containing ephemeral D-Bus bus names (e.g. `StatusTray-:1.770/org/ayatana/NotificationItem/steam`), causing extensions like Top Bar Organizer to lose saved icon positions on every app restart or reboot. Panel items now use stable app-derived identifiers (e.g. `StatusTray-steam`).
+
 ## [1.3] - 2026-02-20
 
 ### Added
