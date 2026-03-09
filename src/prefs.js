@@ -33,6 +33,18 @@ function cleanAppName(name) {
     return cleaned || null;
 }
 
+// Normalize a ToolTip title for use as a stable app ID.
+// Strips dynamic suffixes like " | Room Name" or " — Channel" that
+// Electron apps (e.g. Element) append based on current state.
+function normalizeToolTipId(toolTipTitle) {
+    for (const sep of [' | ', ' — ', ' - ']) {
+        const idx = toolTipTitle.indexOf(sep);
+        if (idx > 0)
+            return toolTipTitle.substring(0, idx);
+    }
+    return toolTipTitle;
+}
+
 function extractFlatpakAppId(iconThemePath) {
     if (!iconThemePath) return null;
     const match = iconThemePath.match(/\/run\/user\/\d+\/app\/([^/]+)/);
@@ -254,7 +266,7 @@ class AppRow extends Adw.ActionRow {
             }
 
             if (!newAppId && toolTipTitle && toolTipTitle.length > 0) {
-                newAppId = toolTipTitle;
+                newAppId = normalizeToolTipId(toolTipTitle);
                 debug(`Got app ID from ToolTip title: ${newAppId}`);
             }
 

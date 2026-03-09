@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Fixed panel item identifiers containing ephemeral D-Bus bus names (e.g. `StatusTray-:1.770/org/ayatana/NotificationItem/steam`), causing extensions like Top Bar Organizer to lose saved icon positions on every app restart or reboot. Panel items now use stable app-derived identifiers (e.g. `StatusTray-steam`).
+- Fixed icon overrides lost after suspend/resume for non-Flatpak Electron apps (e.g. Element). Dynamic ToolTip titles like "Element | Room Name" are now normalized to a stable base name so overrides persist across state changes. Thanks to [@3Lord3](https://github.com/3Lord3) for the report.
 
 ## [1.3] - 2026-02-20
 

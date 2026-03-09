@@ -233,6 +233,18 @@ function stripMnemonics(label) {
     return label.replace(/__/g, '\x00').replace(/_/g, '').replace(/\x00/g, '_');
 }
 
+// Normalize a ToolTip title for use as a stable app ID.
+// Strips dynamic suffixes like " | Room Name" or " — Channel" that
+// Electron apps (e.g. Element) append based on current state.
+function normalizeToolTipId(toolTipTitle) {
+    for (const sep of [' | ', ' — ', ' - ']) {
+        const idx = toolTipTitle.indexOf(sep);
+        if (idx > 0)
+            return toolTipTitle.substring(0, idx);
+    }
+    return toolTipTitle;
+}
+
 // e.g. "/run/user/1000/app/org.ferdium.Ferdium/..." -> "org.ferdium.Ferdium"
 function extractFlatpakAppId(iconThemePath) {
     if (!iconThemePath) return null;
@@ -409,7 +421,7 @@ const TrayItem = GObject.registerClass({
                     const toolTip = toolTipVariant.deep_unpack();
                     // ToolTip is (sa(iiay)ss): icon_name, icon_pixmap, title, description
                     if (toolTip && toolTip.length >= 3 && toolTip[2] && toolTip[2].length > 0) {
-                        newAppId = toolTip[2];
+                        newAppId = normalizeToolTipId(toolTip[2]);
                         debug(`Got app ID from ToolTip title: ${newAppId}`);
                     }
                 } catch (e) {
@@ -738,7 +750,7 @@ const TrayItem = GObject.registerClass({
                     // ToolTip is (sa(iiay)ss): icon_name, icon_pixmap, title, description
                     if (toolTip && toolTip.length >= 3 && toolTip[2] && toolTip[2].length > 0) {
                         const oldAppId = this._appId;
-                        this._appId = toolTip[2];
+                        this._appId = normalizeToolTipId(toolTip[2]);
                         debug(`Updated appId from ${oldAppId} to ${this._appId} (from ToolTip, fallback)`);
                         this.emit('appid-resolved', this._appId);
                         return; // ToolTip found, no need to try other sources
