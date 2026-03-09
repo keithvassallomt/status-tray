@@ -39,9 +39,13 @@ function cleanAppName(name) {
 function normalizeToolTipId(toolTipTitle) {
     for (const sep of [' | ', ' — ', ' - ']) {
         const idx = toolTipTitle.indexOf(sep);
-        if (idx > 0)
-            return toolTipTitle.substring(0, idx);
+        if (idx > 0) {
+            toolTipTitle = toolTipTitle.substring(0, idx);
+            break;
+        }
     }
+    // Strip trailing bracketed/parenthesised counts e.g. "Element [1]", "App (3)"
+    toolTipTitle = toolTipTitle.replace(/\s*[\[(]\d+[\])]\s*$/, '').trim();
     return toolTipTitle;
 }
 
