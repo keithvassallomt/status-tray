@@ -2,10 +2,10 @@
   "name": "Status Tray",
   "description": "Automatic system tray for applications using the StatusNotifierItem/DBusMenu protocol. Displays tray icons for apps like Discord, Slack, Dropbox, Nextcloud, Steam, and more. Supports symbolic (monochrome) and original icon modes, per-app icon customization, drag-and-drop reordering, and individual icon effect tuning. No external daemon required.",
   "uuid": "status-tray@keithvassallo.com",
-  "shell-version": ["45", "46", "47", "48", "49"],
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
   "url": "https://github.com/keithvassallomt/status-tray",
   "settings-schema": "org.gnome.shell.extensions.status-tray",
-  "version-name": "1.4",
+  "version-name": "1.5",
   "donations": {
     "github": "keithvassallomt"
   }

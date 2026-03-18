@@ -4,6 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5] - 2026-03-18
+
+### Changed
+- Confirmed GNOME 50 compatibility and updated manifest.
+
 ## [1.4] - 2026-03-12
 
 ### Fixed
