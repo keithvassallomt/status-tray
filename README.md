@@ -4,6 +4,10 @@ A GNOME Shell extension that brings back the system tray for applications using 
 
 ![Status Tray in action](assets/screenshot-panel.png)   
 
+> [!NOTE]
+> <img width="200" height="auto" alt="friendly-manifesto-badge" src="https://github.com/user-attachments/assets/cb91210b-0f66-46fe-93a8-a3a67857593c" /> <br>
+> This project voluntarily adheres to The Friendly Manifesto. Read more [here](https://friendlymanifesto.org)
+
 ## Features
 
 - **Zero Configuration** - Works out of the box, no external daemon required
@@ -23,6 +27,7 @@ A GNOME Shell extension that brings back the system tray for applications using 
 | GNOME 47 | Supported |
 | GNOME 48 | Supported |
 | GNOME 49 | Supported |
+| GNOME 50 | Supported |
 
 ### Tested Applications
 
