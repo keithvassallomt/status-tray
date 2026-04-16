@@ -38,54 +38,84 @@ function debug(msg) {
 
 // Cached theme inheritance chain — resolved once, cleared in disable().
 let _themeChainCache = null;
+let _themeChainPromise = null;
 
-// Resolve the full theme inheritance chain by reading Inherits= from
-// each theme's index.theme.  Returns a deduped ordered list of theme names.
-// Result is cached so index.theme files are only read once per session.
-function _resolveThemeChain(themeName, iconDirs) {
+function _loadContentsAsync(file) {
+    return new Promise((resolve, reject) => {
+        file.load_contents_async(null, (f, res) => {
+            try {
+                resolve(f.load_contents_finish(res));
+            } catch (e) {
+                reject(e);
+            }
+        });
+    });
+}
+
+// Resolve the full theme inheritance chain by reading Inherits= from each
+// theme's index.theme. Async — results cached in _themeChainCache. Callers
+// that need the chain synchronously use _getThemeChain() which returns the
+// cache or a minimal fallback if precompute hasn't finished.
+async function _precomputeThemeChain(themeName, iconDirs) {
     if (_themeChainCache)
         return _themeChainCache;
+    if (_themeChainPromise)
+        return _themeChainPromise;
 
-    const visited = new Set();
-    const chain = [];
-    const queue = [themeName];
+    _themeChainPromise = (async () => {
+        const visited = new Set();
+        const chain = [];
+        const queue = [themeName];
 
-    while (queue.length > 0) {
-        const name = queue.shift();
-        if (visited.has(name))
-            continue;
-        visited.add(name);
-        chain.push(name);
-
-        for (const baseDir of iconDirs) {
-            const indexPath = `${baseDir}/${name}/index.theme`;
-            if (!GLib.file_test(indexPath, GLib.FileTest.EXISTS))
+        while (queue.length > 0) {
+            const name = queue.shift();
+            if (visited.has(name))
                 continue;
-            try {
-                const [ok, contents] = GLib.file_get_contents(indexPath);
-                if (!ok) continue;
-                const text = new TextDecoder().decode(contents);
-                const match = text.match(/^Inherits\s*=\s*(.+)$/m);
-                if (match) {
-                    const parents = match[1].split(',').map(s => s.trim()).filter(s => s);
-                    for (const p of parents) {
-                        if (!visited.has(p))
-                            queue.push(p);
+            visited.add(name);
+            chain.push(name);
+
+            for (const baseDir of iconDirs) {
+                const indexPath = `${baseDir}/${name}/index.theme`;
+                if (!GLib.file_test(indexPath, GLib.FileTest.EXISTS))
+                    continue;
+                try {
+                    const file = Gio.File.new_for_path(indexPath);
+                    const [ok, contents] = await _loadContentsAsync(file);
+                    if (!ok) break;
+                    const text = new TextDecoder().decode(contents);
+                    const match = text.match(/^Inherits\s*=\s*(.+)$/m);
+                    if (match) {
+                        const parents = match[1].split(',').map(s => s.trim()).filter(s => s);
+                        for (const p of parents) {
+                            if (!visited.has(p))
+                                queue.push(p);
+                        }
                     }
+                } catch (_e) {
+                    // ignore unreadable index files
                 }
-            } catch (e) {
-                // ignore unreadable index files
+                break;
             }
-            break; // found this theme's index, no need to check other dirs
         }
-    }
 
-    // Always include hicolor as ultimate fallback
-    if (!visited.has('hicolor'))
-        chain.push('hicolor');
+        if (!visited.has('hicolor'))
+            chain.push('hicolor');
 
-    _themeChainCache = chain;
-    return chain;
+        _themeChainCache = chain;
+        _themeChainPromise = null;
+        return chain;
+    })();
+
+    return _themeChainPromise;
+}
+
+function _getThemeChain(themeName) {
+    if (_themeChainCache)
+        return _themeChainCache;
+    // Precompute hasn't finished — return a minimal chain so the caller can
+    // still attempt a direct lookup. Subsequent icon refreshes will use the
+    // full cache once it's ready.
+    return themeName === 'hicolor' ? ['hicolor'] : [themeName, 'hicolor'];
 }
 
 function findIconInTheme(iconName) {
@@ -97,7 +127,7 @@ function findIconInTheme(iconName) {
         iconDirs.push('/var/lib/flatpak/exports/share/icons');
         iconDirs.push(`${GLib.get_home_dir()}/.local/share/icons`);
 
-        const themes = _resolveThemeChain(themeName, iconDirs);
+        const themes = _getThemeChain(themeName);
         const categories = ['apps', 'status', 'legacy', 'devices', 'actions'];
         const subdirs = [];
         for (const cat of categories) {
@@ -298,7 +328,7 @@ const TrayItem = GObject.registerClass({
         });
         this.menu.addMenuItem(this._loadingItem);
 
-        this.menu.connect('open-state-changed', (menu, isOpen) => {
+        this._menuOpenStateId = this.menu.connect('open-state-changed', (menu, isOpen) => {
             debug(`Menu open-state-changed: isOpen=${isOpen}, busName=${this._busName}`);
             if (isOpen) {
                 this._loadMenu();
@@ -343,7 +373,7 @@ const TrayItem = GObject.registerClass({
 
             debug(`Proxy initialized for ${this._busName}`);
 
-            this._proxy.connect('g-properties-changed', (proxy, changed, invalidated) => {
+            this._proxyPropertiesChangedId = this._proxy.connect('g-properties-changed', (proxy, changed, invalidated) => {
                 const props = Object.keys(changed.deep_unpack());
                 debug(`Properties changed for ${this._busName}: ${props.join(', ')}`);
 
@@ -1501,6 +1531,16 @@ const TrayItem = GObject.registerClass({
             this._cancellable = null;
         }
 
+        if (this._menuOpenStateId && this.menu) {
+            this.menu.disconnect(this._menuOpenStateId);
+            this._menuOpenStateId = 0;
+        }
+
+        if (this._proxyPropertiesChangedId && this._proxy) {
+            this._proxy.disconnect(this._proxyPropertiesChangedId);
+            this._proxyPropertiesChangedId = 0;
+        }
+
         const bus = Gio.DBus.session;
         for (const signalId of this._signalIds)
             bus.signal_unsubscribe(signalId);
@@ -2012,6 +2052,7 @@ class StatusNotifierWatcher {
         }
 
         this._dbusImpl.unexport();
+        this._dbusImpl = null;
 
         this._items.clear();
     }
@@ -2057,6 +2098,17 @@ export default class StatusTrayExtension extends Extension {
 
         this._watcher = new StatusNotifierWatcher(this);
 
+        // Kick off async theme-chain precompute so icon lookups use the full
+        // inheritance chain without any sync file IO on the first lookup.
+        const themeName = St.Settings.get().gtk_icon_theme;
+        const dataDirs = GLib.get_system_data_dirs();
+        const iconDirs = dataDirs.map(d => `${d}/icons`);
+        iconDirs.push('/var/lib/flatpak/exports/share/icons');
+        iconDirs.push(`${GLib.get_home_dir()}/.local/share/icons`);
+        _precomputeThemeChain(themeName, iconDirs).catch(e => {
+            debug(`Theme chain precompute failed: ${e.message}`);
+        });
+
         debug('Extension enabled');
     }
 
@@ -2085,6 +2137,7 @@ export default class StatusTrayExtension extends Extension {
         _sniInterfaceInfo = null;
         _interfaceSettings = null;
         _themeChainCache = null;
+        _themeChainPromise = null;
 
         debug('Extension disabled');
     }

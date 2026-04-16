@@ -4,6 +4,12 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- Icon theme inheritance is now resolved asynchronously at startup instead of via synchronous file reads, in line with GNOME extension review guidelines.
+- Tray item menu and D-Bus proxy signals are now explicitly disconnected, and the watcher's exported D-Bus object reference released, on disable. Improves hygiene around suspend/resume and re-enable cycles.
+
 ## [1.5] - 2026-03-18
 
 ### Changed
