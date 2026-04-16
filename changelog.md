@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Effect Settings dialog preview now matches the actual tray icon. The preview's contrast formula now uses Clutter's `tan((c+1)·π/4)` mapping instead of treating the slider value as a direct multiplier, and the tint formula uses luminance weights to match `Clutter.ColorizeEffect`. Symbolic icons also correctly skip desaturation/brightness/contrast in the preview, matching tray behaviour.
+- Icon picker's "Current Icon" preview now shows the actual icon the app is displaying (including pixmap-backed icons from Electron/Flatpak apps) instead of falling back to a generic placeholder when the icon name can't be looked up in the GTK theme.
 
 ### Changed
 - Icon theme inheritance is now resolved asynchronously at startup instead of via synchronous file reads, in line with GNOME extension review guidelines.

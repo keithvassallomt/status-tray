@@ -533,6 +533,7 @@ class AppRow extends Adw.ActionRow {
             this._appId,
             this._displayName,
             this._currentIconName,
+            this._iconImage.gicon,
             this._settings,
             this._window
         );
@@ -560,7 +561,7 @@ const IconPickerDialog = GObject.registerClass({
         'icon-selected': { param_types: [GObject.TYPE_STRING] },
     },
 }, class IconPickerDialog extends Adw.Dialog {
-    _init(appId, displayName, currentIconName, settings, parentWindow) {
+    _init(appId, displayName, currentIconName, currentIconGicon, settings, parentWindow) {
         super._init({
             title: `Icon for ${displayName}`,
             content_width: 450,
@@ -570,6 +571,7 @@ const IconPickerDialog = GObject.registerClass({
         this._appId = appId;
         this._settings = settings;
         this._currentIconName = currentIconName;
+        this._currentIconGicon = currentIconGicon;
         this._parentWindow = parentWindow;
         this._allIcons = [];  // Cache of discovered icons
 
@@ -600,9 +602,20 @@ const IconPickerDialog = GObject.registerClass({
         const currentOverride = overrides[appId] || null;
 
         this._previewImage = new Gtk.Image({
-            icon_name: currentOverride || currentIconName || 'application-x-executable-symbolic',
             pixel_size: 48,
         });
+        if (currentOverride) {
+            this._previewImage.set_from_icon_name(currentOverride);
+        } else if (currentIconGicon) {
+            // Mirror what's rendered on the AppRow — handles file-backed
+            // icons (IconPixmap via temp file, custom path overrides) that
+            // can't be resolved by name.
+            this._previewImage.set_from_gicon(currentIconGicon);
+        } else if (currentIconName) {
+            this._previewImage.set_from_icon_name(currentIconName);
+        } else {
+            this._previewImage.set_from_icon_name('application-x-executable-symbolic');
+        }
 
         const previewRow = new Adw.ActionRow({
             title: currentOverride ? this._getIconDisplayName(currentOverride) : 'Default',
