@@ -236,6 +236,21 @@ function stripMnemonics(label) {
 // Normalize a ToolTip title for use as a stable app ID.
 // Strips dynamic suffixes like " | Room Name" or " — Channel" that
 // Electron apps (e.g. Element) append based on current state.
+function cleanAppName(name) {
+    if (!name) return null;
+
+    let cleaned = name
+        .replace(/\s*[-–—]\s*(Synced|Syncing|Paused|Error|Offline|Online|Connected|Disconnected).*$/i, '')
+        .replace(/\s*\([^)]*\)\s*$/, '')
+        .trim();
+
+    cleaned = cleaned
+        .replace(/[_-]+/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
+
+    return cleaned || null;
+}
+
 function normalizeToolTipId(toolTipTitle) {
     for (const sep of [' | ', ' — ', ' - ']) {
         const idx = toolTipTitle.indexOf(sep);
@@ -394,6 +409,34 @@ const TrayItem = GObject.registerClass({
         this._updateIcon();
     }
 
+    _computeDisplayName() {
+        let title = null;
+        let toolTipTitle = null;
+        let id = null;
+        try {
+            title = this._proxy.get_cached_property('Title')?.deep_unpack() ?? null;
+        } catch (_e) { /* ignore */ }
+        try {
+            const toolTipVariant = this._proxy.get_cached_property('ToolTip');
+            if (toolTipVariant) {
+                const toolTip = toolTipVariant.deep_unpack();
+                if (toolTip && toolTip.length >= 3)
+                    toolTipTitle = toolTip[2];
+            }
+        } catch (_e) { /* ignore */ }
+        try {
+            id = this._proxy.get_cached_property('Id')?.deep_unpack() ?? null;
+        } catch (_e) { /* ignore */ }
+
+        if (title && title.length > 0)
+            return cleanAppName(title);
+        if (toolTipTitle && toolTipTitle.length > 0)
+            return cleanAppName(normalizeToolTipId(toolTipTitle));
+        if (id && id.length > 0 && !id.startsWith('chrome_status_icon_'))
+            return cleanAppName(id);
+        return null;
+    }
+
     _resolveAppId() {
         const oldAppId = this._appId;
         let newAppId = null;
@@ -431,6 +474,22 @@ const TrayItem = GObject.registerClass({
                 } catch (e) {
                     debug(`Failed to parse ToolTip: ${e.message}`);
                 }
+            }
+        }
+
+        // User-opted alias: if the computed display name matches a title-alias
+        // entry, that wins over the SNI-derived appId. This handles apps that
+        // randomize their SNI Id on every launch (e.g. Karing).
+        const displayName = this._computeDisplayName();
+        if (displayName && this._settings) {
+            try {
+                const aliases = this._settings.get_value('title-aliases').deep_unpack();
+                if (aliases[displayName]) {
+                    newAppId = aliases[displayName];
+                    debug(`Using title alias for "${displayName}": ${newAppId}`);
+                }
+            } catch (e) {
+                debug(`Failed to read title-aliases: ${e.message}`);
             }
         }
 
@@ -2051,6 +2110,14 @@ export default class StatusTrayExtension extends Extension {
             'changed::app-order', () => {
                 debug('app-order setting changed');
                 this._reorderItems();
+            },
+            'changed::title-aliases', () => {
+                debug('title-aliases setting changed');
+                for (const trayItem of this._items.values()) {
+                    if (trayItem._resolveAppId)
+                        trayItem._resolveAppId();
+                }
+                this._refreshItems();
             },
             this
         );

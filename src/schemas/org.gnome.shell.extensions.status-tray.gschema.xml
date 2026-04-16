@@ -44,5 +44,11 @@
       <description>List of app IDs whose icon overrides ignore app status icon changes. When locked, the chosen override stays in place regardless of NewIcon signals from the app.</description>
     </key>
 
+    <key name="title-aliases" type="a{ss}">
+      <default>{}</default>
+      <summary>Display-name aliases for apps with unstable SNI Ids</summary>
+      <description>Maps an app's display name to a stable appId used as the settings key. Opt-in per app via the "Match by App Name" switch in icon customization. Intended for apps (e.g. Karing) that randomize their SNI Id on every launch.</description>
+    </key>
+
   </schema>
 </schemalist>
