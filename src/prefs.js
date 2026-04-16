@@ -1188,6 +1188,7 @@ const IconEffectDialog = GObject.registerClass({
     }
 
     _setIconFromPixmap(pixmaps) {
+        this._isSymbolicIcon = false;
         let bestPixmap = pixmaps[0];
         let bestSize = bestPixmap[0];
         const targetSize = 64;
@@ -1222,6 +1223,7 @@ const IconEffectDialog = GObject.registerClass({
     }
 
     _setIconFromName(iconName) {
+        this._isSymbolicIcon = iconName?.endsWith('-symbolic') ?? false;
         try {
             const iconTheme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default());
             const iconPaintable = iconTheme.lookup_icon(
@@ -1340,6 +1342,18 @@ const IconEffectDialog = GObject.registerClass({
 
         const newPixels = new Uint8Array(srcPixels.length);
 
+        // Match Clutter's shaders so the preview matches the tray icon:
+        //   DesaturateEffect:         rgb = mix(rgb, luminance, factor)
+        //   BrightnessContrastEffect: rgb += brightness; rgb = (rgb - 0.5) * C + 0.5
+        //                             where C = tan((contrast + 1) * π/4)
+        //   ColorizeEffect:           rgb = luminance * tint
+        // Symbolic icons skip desaturate + brightness/contrast to mirror the
+        // tray pipeline, where St.Icon recolours them to match the panel.
+        const applyColorEffects = !this._isSymbolicIcon;
+        const contrastClamped = Math.max(-1, Math.min(0.9999, contrast));
+        const contrastFactor = Math.tan((contrastClamped + 1) * Math.PI / 4);
+        const brightnessOffset = brightness * 255;
+
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
                 const offset = y * rowstride + x * nChannels;
@@ -1349,28 +1363,28 @@ const IconEffectDialog = GObject.registerClass({
                 let b = srcPixels[offset + 2];
                 const a = hasAlpha ? srcPixels[offset + 3] : 255;
 
-                if (desaturation > 0) {
-                    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-                    r = r + (gray - r) * desaturation;
-                    g = g + (gray - g) * desaturation;
-                    b = b + (gray - b) * desaturation;
+                if (applyColorEffects) {
+                    if (desaturation > 0) {
+                        const L = 0.299 * r + 0.587 * g + 0.114 * b;
+                        r = r + (L - r) * desaturation;
+                        g = g + (L - g) * desaturation;
+                        b = b + (L - b) * desaturation;
+                    }
+
+                    r = r + brightnessOffset;
+                    g = g + brightnessOffset;
+                    b = b + brightnessOffset;
+
+                    r = (r - 128) * contrastFactor + 128;
+                    g = (g - 128) * contrastFactor + 128;
+                    b = (b - 128) * contrastFactor + 128;
                 }
 
-                const brightnessOffset = brightness * 255;
-                r = r + brightnessOffset;
-                g = g + brightnessOffset;
-                b = b + brightnessOffset;
-
-                const contrastFactor = contrast;
-                r = (r - 128) * contrastFactor + 128;
-                g = (g - 128) * contrastFactor + 128;
-                b = (b - 128) * contrastFactor + 128;
-
                 if (useTint) {
-                    const gray = (r + g + b) / 3;
-                    r = gray * tintRgba.red;
-                    g = gray * tintRgba.green;
-                    b = gray * tintRgba.blue;
+                    const L = 0.299 * r + 0.587 * g + 0.114 * b;
+                    r = L * tintRgba.red;
+                    g = L * tintRgba.green;
+                    b = L * tintRgba.blue;
                 }
 
                 newPixels[offset] = Math.max(0, Math.min(255, Math.round(r)));
