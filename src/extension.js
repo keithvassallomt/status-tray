@@ -392,6 +392,16 @@ const TrayItem = GObject.registerClass({
                 const props = Object.keys(changed.deep_unpack());
                 debug(`Properties changed for ${this._busName}: ${props.join(', ')}`);
 
+                // Title/ToolTip may arrive after init_async (Electron apps
+                // often populate them slightly late). Re-run appId resolution
+                // so any user-set title alias picks up the new display name.
+                if (props.includes('Title') || props.includes('ToolTip')) {
+                    const prevAppId = this._appId;
+                    this._resolveAppId();
+                    if (this._appId !== prevAppId)
+                        this._updateIcon();
+                }
+
                 if (props.some(p => p.startsWith('Icon'))) {
                     // If the user locked the override, ignore property changes
                     try {

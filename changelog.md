@@ -6,7 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Opt-in "Match by App Name" toggle in icon customization for apps (e.g. Karing) that randomize their SNI Id on every launch. When enabled, per-app settings are keyed by the app's display name instead of the unstable process-derived ID, so custom icons and other preferences persist across app restarts. Thanks to [@paveleremin](https://github.com/paveleremin) for the report.
+
 ### Fixed
+- Title-alias resolution now re-runs when an app's `Title` or `ToolTip` properties arrive after the initial D-Bus proxy init (common for Electron-style apps). Previously, apps that populated `Title` slightly late would keep their unstable SNI Id as the settings key after a restart until the extension itself was reloaded.
+- Per-app settings migration when the appId changes now covers all keyed settings (icon overrides, icon effect overrides, fallback list, lock list) instead of only `app-order` and `disabled-apps`.
 - Effect Settings dialog preview now matches the actual tray icon. The preview's contrast formula now uses Clutter's `tan((c+1)·π/4)` mapping instead of treating the slider value as a direct multiplier, and the tint formula uses luminance weights to match `Clutter.ColorizeEffect`. Symbolic icons also correctly skip desaturation/brightness/contrast in the preview, matching tray behaviour.
 - Icon picker's "Current Icon" preview now shows the actual icon the app is displaying (including pixmap-backed icons from Electron/Flatpak apps) instead of falling back to a generic placeholder when the icon name can't be looked up in the GTK theme.
 
