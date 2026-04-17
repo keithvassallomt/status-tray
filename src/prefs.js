@@ -55,6 +55,43 @@ function extractFlatpakAppId(iconThemePath) {
     return match ? match[1] : null;
 }
 
+// Move per-app settings entries from an old appId key to a new one across
+// every keyed setting (list or dict). No-op if the old key is absent.
+function migrateAppIdAcrossSettings(settings, oldId, newId) {
+    if (!oldId || !newId || oldId === newId)
+        return;
+
+    const moveInStrv = (key) => {
+        const list = settings.get_strv(key);
+        const oldIdx = list.indexOf(oldId);
+        const hasNew = list.includes(newId);
+        if (oldIdx === -1 && !hasNew)
+            return;
+        if (hasNew && oldIdx !== -1)
+            list.splice(oldIdx, 1);
+        else if (oldIdx !== -1)
+            list[oldIdx] = newId;
+        settings.set_strv(key, list);
+    };
+
+    const moveInDict = (key) => {
+        const dict = settings.get_value(key).deep_unpack();
+        if (!(oldId in dict))
+            return;
+        if (!(newId in dict))
+            dict[newId] = dict[oldId];
+        delete dict[oldId];
+        settings.set_value(key, new GLib.Variant('a{ss}', dict));
+    };
+
+    moveInStrv('app-order');
+    moveInStrv('disabled-apps');
+    moveInStrv('icon-fallback-overrides');
+    moveInStrv('icon-lock-overrides');
+    moveInDict('icon-overrides');
+    moveInDict('icon-effect-overrides');
+}
+
 const AppRow = GObject.registerClass(
 class AppRow extends Adw.ActionRow {
     _init(appId, busName, objectPath, settings, window, onReorder, rebuildAppsGroup) {
@@ -274,18 +311,28 @@ class AppRow extends Adw.ActionRow {
                 debug(`Got app ID from ToolTip title: ${newAppId}`);
             }
 
-            if (newAppId && newAppId !== oldAppId) {
-                this._appId = newAppId;
-                this.set_subtitle(newAppId);  // Update subtitle to show stable ID
-                const appOrder = this._settings.get_strv('app-order');
-                if (appOrder.includes(newAppId)) {
-                    const oldIdx = appOrder.indexOf(oldAppId);
-                    if (oldIdx !== -1)
-                        appOrder.splice(oldIdx, 1);
-                } else if (appOrder.includes(oldAppId)) {
-                    appOrder[appOrder.indexOf(oldAppId)] = newAppId;
+            // Determine the tentative display name early so we can consult
+            // the title-aliases map; an alias hit supersedes the SNI-derived ID.
+            let tentativeDisplayName = null;
+            if (title && title.length > 0)
+                tentativeDisplayName = cleanAppName(title);
+            else if (toolTipTitle && toolTipTitle.length > 0)
+                tentativeDisplayName = cleanAppName(normalizeToolTipId(toolTipTitle));
+            else if (id && id.length > 0 && !id.startsWith('chrome_status_icon_'))
+                tentativeDisplayName = cleanAppName(id);
+
+            if (tentativeDisplayName) {
+                const aliases = this._settings.get_value('title-aliases').deep_unpack();
+                if (aliases[tentativeDisplayName]) {
+                    newAppId = aliases[tentativeDisplayName];
+                    debug(`Using title alias for "${tentativeDisplayName}": ${newAppId}`);
                 }
-                this._settings.set_strv('app-order', appOrder);
+            }
+
+            if (newAppId && newAppId !== oldAppId) {
+                migrateAppIdAcrossSettings(this._settings, oldAppId, newAppId);
+                this._appId = newAppId;
+                this.set_subtitle(newAppId);
                 const disabledApps = this._settings.get_strv('disabled-apps');
                 this._switch.set_active(!disabledApps.includes(this._appId));
                 this._rebuildAppsGroup();
@@ -569,6 +616,7 @@ const IconPickerDialog = GObject.registerClass({
         });
 
         this._appId = appId;
+        this._displayName = displayName;
         this._settings = settings;
         this._currentIconName = currentIconName;
         this._currentIconGicon = currentIconGicon;
@@ -672,6 +720,33 @@ const IconPickerDialog = GObject.registerClass({
                 apps.splice(index, 1);
             }
             this._settings.set_strv('icon-lock-overrides', apps);
+        });
+
+        const aliases = settings.get_value('title-aliases').deep_unpack();
+        this._aliasRow = new Adw.SwitchRow({
+            title: 'Match by App Name',
+            subtitle: `Identify this app as "${displayName}" instead of its process ID. Enable for apps that randomize their ID on every launch.`,
+        });
+        this._aliasRow.set_active(aliases[displayName] !== undefined);
+        previewGroup.add(this._aliasRow);
+
+        this._aliasRow.connect('notify::active', () => {
+            const map = this._settings.get_value('title-aliases').deep_unpack();
+            if (this._aliasRow.get_active()) {
+                if (map[this._displayName] === undefined) {
+                    map[this._displayName] = this._displayName;
+                    this._settings.set_value('title-aliases', new GLib.Variant('a{ss}', map));
+                }
+                if (this._appId !== this._displayName) {
+                    migrateAppIdAcrossSettings(this._settings, this._appId, this._displayName);
+                    this._appId = this._displayName;
+                }
+            } else {
+                if (map[this._displayName] !== undefined) {
+                    delete map[this._displayName];
+                    this._settings.set_value('title-aliases', new GLib.Variant('a{ss}', map));
+                }
+            }
         });
 
         const filterBox = new Gtk.Box({
