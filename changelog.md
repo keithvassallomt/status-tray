@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.6] - 2026-04-17
 
 ### Added
 - Opt-in "Match by App Name" toggle in icon customization for apps (e.g. Karing) that randomize their SNI Id on every launch. When enabled, per-app settings are keyed by the app's display name instead of the unstable process-derived ID, so custom icons and other preferences persist across app restarts. Thanks to [@paveleremin](https://github.com/paveleremin) for the report.
