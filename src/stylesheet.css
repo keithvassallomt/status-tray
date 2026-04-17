@@ -4,9 +4,14 @@
     icon-size: 16px;
 }
 
-/* Panel button styling */
+/* Panel button styling — tight padding so multiple tray icons group
+ * compactly, matching the AppIndicator extension and the native
+ * GNOME status icons. */
 .panel-button.status-tray-button {
-    -natural-hpadding: 4px;
+    -natural-hpadding: 2px;
+    -minimum-hpadding: 2px;
+    padding-left: 0;
+    padding-right: 0;
 }
 
 /* Symbolic icon styling for dark mode */
