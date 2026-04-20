@@ -50,5 +50,17 @@
       <description>Maps an app's display name to a stable appId used as the settings key. Opt-in per app via the "Match by App Name" switch in icon customization. Intended for apps (e.g. Karing) that randomize their SNI Id on every launch.</description>
     </key>
 
+    <key name="overflow-enabled" type="b">
+      <default>false</default>
+      <summary>Enable panel overflow</summary>
+      <description>When enabled, tray items beyond the inline limit collapse into a single overflow button at the rightmost end of the tray.</description>
+    </key>
+
+    <key name="overflow-inline-count" type="i">
+      <default>3</default>
+      <summary>Inline icon count</summary>
+      <description>Number of tray items to show directly in the panel before overflowing into the overflow button's menu. Range: 1-20.</description>
+    </key>
+
   </schema>
 </schemalist>

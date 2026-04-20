@@ -304,6 +304,7 @@ function extractFlatpakAppId(iconThemePath) {
 const TrayItem = GObject.registerClass({
     Signals: {
         'appid-resolved': { param_types: [GObject.TYPE_STRING] },
+        'display-changed': {},
     },
 }, class TrayItem extends PanelMenu.Button {
     _init(busName, objectPath, settings) {
@@ -392,6 +393,8 @@ const TrayItem = GObject.registerClass({
                 const props = Object.keys(changed.deep_unpack());
                 debug(`Properties changed for ${this._busName}: ${props.join(', ')}`);
 
+                let displayMayHaveChanged = false;
+
                 // Title/ToolTip may arrive after init_async (Electron apps
                 // often populate them slightly late). Re-run appId resolution
                 // so any user-set title alias picks up the new display name.
@@ -400,21 +403,29 @@ const TrayItem = GObject.registerClass({
                     this._resolveAppId();
                     if (this._appId !== prevAppId)
                         this._updateIcon();
+                    displayMayHaveChanged = true;
                 }
 
                 if (props.some(p => p.startsWith('Icon'))) {
                     // If the user locked the override, ignore property changes
+                    let locked = false;
                     try {
                         const lockApps = this._settings.get_strv('icon-lock-overrides');
                         if (lockApps.includes(this._appId)) {
                             debug(`Ignoring Icon property change for ${this._appId}: override is locked`);
-                            return;
+                            locked = true;
                         }
                     } catch (e) {
                         // Key may not exist in older schema versions
                     }
-                    this._updateIcon();
+                    if (!locked) {
+                        this._updateIcon();
+                        displayMayHaveChanged = true;
+                    }
                 }
+
+                if (displayMayHaveChanged)
+                    this.emit('display-changed');
             });
 
             this._fetchPropertiesFromProxy();
@@ -1360,7 +1371,7 @@ const TrayItem = GObject.registerClass({
         return GLib.Bytes.new(rgba);
     }
 
-    _loadMenu() {
+    _loadMenu(targetMenu = this.menu) {
         debug(`_loadMenu called for ${this._busName}, menuPath=${this._menuPath}`);
 
         if (!this._menuPath) {
@@ -1368,12 +1379,12 @@ const TrayItem = GObject.registerClass({
             return;
         }
 
-        this.menu.removeAll();
+        targetMenu.removeAll();
         const loadingItem = new PopupMenu.PopupMenuItem('Loading...', {
             reactive: false,
             style_class: 'popup-inactive-menu-item',
         });
-        this.menu.addMenuItem(loadingItem);
+        targetMenu.addMenuItem(loadingItem);
 
         const bus = Gio.DBus.session;
 
@@ -1399,12 +1410,12 @@ const TrayItem = GObject.registerClass({
                     debug(`AboutToShow failed (may be ok): ${e}`);
                 }
 
-                this._fetchMenuLayout();
+                this._fetchMenuLayout(targetMenu);
             }
         );
     }
 
-    _fetchMenuLayout() {
+    _fetchMenuLayout(targetMenu = this.menu) {
         debug(`_fetchMenuLayout called for ${this._busName}`);
         const bus = Gio.DBus.session;
 
@@ -1428,8 +1439,8 @@ const TrayItem = GObject.registerClass({
                     const reply = conn.call_finish(result);
                     const [revision, layout] = reply.deep_unpack();
                     debug(`Got menu layout, revision ${revision}`);
-                    this.menu.removeAll();
-                    this._buildMenuFromLayout(layout);
+                    targetMenu.removeAll();
+                    this._buildMenuFromLayout(layout, targetMenu);
                 } catch (e) {
                     debug(`Failed to get menu layout: ${e}`);
                 }
@@ -1437,7 +1448,7 @@ const TrayItem = GObject.registerClass({
         );
     }
 
-    _buildMenuFromLayout(layout) {
+    _buildMenuFromLayout(layout, targetMenu = this.menu) {
         const [rootId, rootProps, children] = layout;
 
         if (!children || children.length === 0) {
@@ -1449,11 +1460,11 @@ const TrayItem = GObject.registerClass({
 
         for (const childVariant of children) {
             const child = childVariant.deep_unpack();
-            this._addMenuItem(child);
+            this._addMenuItem(child, targetMenu);
         }
     }
 
-    _addMenuItem(item) {
+    _addMenuItem(item, targetMenu = this.menu) {
         const [itemId, properties, children] = item;
 
         const rawLabel = properties['label']?.deep_unpack() || '';
@@ -1472,7 +1483,7 @@ const TrayItem = GObject.registerClass({
             if (children && children.length > 0) {
                 for (const childVariant of children) {
                     const child = childVariant.deep_unpack();
-                    this._addMenuItem(child);
+                    this._addMenuItem(child, targetMenu);
                 }
             }
             return;
@@ -1483,7 +1494,7 @@ const TrayItem = GObject.registerClass({
                 debug(`Skipping consecutive separator (id=${itemId})`);
                 return;
             }
-            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+            targetMenu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
             this._lastMenuItemType = 'separator';
             return;
         }
@@ -1494,12 +1505,20 @@ const TrayItem = GObject.registerClass({
                 subMenu.setSensitive(false);
             }
 
+            // Scope the "only one submenu open at a time" tracking to the
+            // immediate containing menu. Without this, PopupSubMenuMenuItem's
+            // _subMenuOpenStateChanged walks to the outermost menu and closes
+            // whatever sibling submenu is currently open — which, when this
+            // menu is itself nested (e.g. inside the overflow row's submenu),
+            // closes the user's breadcrumb out from under them.
+            subMenu._getTopMenu = () => targetMenu;
+
             for (const childVariant of children) {
                 const child = childVariant.deep_unpack();
                 this._addSubMenuItem(subMenu.menu, child);
             }
 
-            this.menu.addMenuItem(subMenu);
+            targetMenu.addMenuItem(subMenu);
             this._lastMenuItemType = 'submenu';
             return;
         }
@@ -1515,13 +1534,13 @@ const TrayItem = GObject.registerClass({
             this._activateMenuItem(itemId, label);
         });
 
-        this.menu.addMenuItem(menuItem);
+        targetMenu.addMenuItem(menuItem);
         this._lastMenuItemType = 'item';
 
         if (children && children.length > 0) {
             for (const childVariant of children) {
                 const child = childVariant.deep_unpack();
-                this._addMenuItem(child);
+                this._addMenuItem(child, targetMenu);
             }
         }
     }
@@ -1628,6 +1647,122 @@ const TrayItem = GObject.registerClass({
         }
 
         debug(`Destroyed TrayItem for ${this._busName}`);
+        super.destroy();
+    }
+});
+
+const OverflowButton = GObject.registerClass(
+class OverflowButton extends PanelMenu.Button {
+    _init(extensionPath, settings) {
+        super._init(0.0, 'StatusTray-Overflow');
+
+        this._extensionPath = extensionPath;
+        this._settings = settings;
+
+        this._icon = new St.Icon({
+            style_class: 'system-status-icon status-tray-icon',
+        });
+        this.add_child(this._icon);
+        this.add_style_class_name('status-tray-button');
+        this.add_style_class_name('status-tray-overflow-button');
+
+        this.updateOverflowIcon();
+
+        // Rows keyed by the source TrayItem so we can update in place on
+        // display-changed signals without rebuilding the whole submenu.
+        this._rows = new Map();
+    }
+
+    updateOverflowIcon() {
+        const mode = this._settings?.get_string('icon-mode') ?? 'symbolic';
+        const fileName = mode === 'symbolic'
+            ? 'status-tray-symbolic.svg'
+            : 'status-tray.svg';
+        const file = Gio.File.new_for_path(
+            GLib.build_filenamev([this._extensionPath, 'icons', fileName])
+        );
+        this._icon.set_gicon(new Gio.FileIcon({ file }));
+    }
+
+    setOverflowedItems(trayItems) {
+        // Disconnect from any TrayItems no longer in the overflow set before
+        // rebuilding; connectObject/disconnectObject uses `this` as the owner.
+        for (const trayItem of this._rows.keys()) {
+            if (!trayItems.includes(trayItem))
+                trayItem.disconnectObject(this);
+        }
+
+        this.menu.removeAll();
+        this._rows.clear();
+
+        for (const trayItem of trayItems) {
+            const label = trayItem._computeDisplayName?.() || trayItem._appId || 'Unknown';
+            const subItem = new PopupMenu.PopupSubMenuMenuItem(label, true);
+            this._applyRowIcon(subItem, trayItem);
+
+            // PopupSubMenu.open() is a no-op when isEmpty() is true, which
+            // would prevent 'open-state-changed' from firing and leave us
+            // unable to lazily populate the menu. Seed with a placeholder
+            // so the submenu is always openable.
+            this._seedPlaceholder(subItem.menu);
+
+            subItem._populated = false;
+            subItem.menu.connect('open-state-changed', (_menu, isOpen) => {
+                if (isOpen && !subItem._populated) {
+                    subItem._populated = true;
+                    trayItem._loadMenu(subItem.menu);
+                }
+            });
+
+            this.menu.addMenuItem(subItem);
+            this._rows.set(trayItem, subItem);
+
+            trayItem.connectObject('display-changed', () => {
+                this._refreshRow(trayItem);
+            }, this);
+        }
+    }
+
+    _seedPlaceholder(menu) {
+        menu.removeAll();
+        menu.addMenuItem(new PopupMenu.PopupMenuItem('Loading...', {
+            reactive: false,
+            style_class: 'popup-inactive-menu-item',
+        }));
+    }
+
+    _applyRowIcon(subItem, trayItem) {
+        const src = trayItem._icon;
+        if (!src)
+            return;
+        const gicon = src.get_gicon?.();
+        if (gicon) {
+            subItem.icon.set_gicon(gicon);
+        } else if (src.icon_name) {
+            subItem.icon.set_icon_name(src.icon_name);
+        } else {
+            subItem.icon.set_icon_name(FALLBACK_ICON_NAME);
+        }
+    }
+
+    _refreshRow(trayItem) {
+        const subItem = this._rows.get(trayItem);
+        if (!subItem)
+            return;
+        const label = trayItem._computeDisplayName?.() || trayItem._appId || 'Unknown';
+        subItem.label.text = label;
+        this._applyRowIcon(subItem, trayItem);
+        // Force the submenu to refetch on next open so menu contents stay
+        // in sync if the app's menu tree changed. Re-seed the placeholder
+        // so the submenu is still openable (see note in setOverflowedItems).
+        subItem._populated = false;
+        this._seedPlaceholder(subItem.menu);
+    }
+
+    destroy() {
+        for (const trayItem of this._rows.keys())
+            trayItem.disconnectObject(this);
+        this._rows.clear();
         super.destroy();
     }
 });
@@ -2170,6 +2305,14 @@ export default class StatusTrayExtension extends Extension {
                 }
                 this._refreshItems();
             },
+            'changed::overflow-enabled', () => {
+                debug('overflow-enabled setting changed');
+                this._applyOverflow();
+            },
+            'changed::overflow-inline-count', () => {
+                debug('overflow-inline-count setting changed');
+                this._applyOverflow();
+            },
             this
         );
 
@@ -2204,6 +2347,11 @@ export default class StatusTrayExtension extends Extension {
 
         this._settings.disconnectObject(this);
         this._settings = null;
+
+        if (this._overflowButton) {
+            this._overflowButton.destroy();
+            this._overflowButton = null;
+        }
 
         for (const [key, item] of this._items) {
             item._destroyedInternally = true;
@@ -2261,6 +2409,7 @@ export default class StatusTrayExtension extends Extension {
                 this._items.delete(uniqueId);
                 if (this._watcher)
                     this._watcher._removeItemTracking(uniqueId);
+                this._applyOverflow();
             }
         });
 
@@ -2275,6 +2424,7 @@ export default class StatusTrayExtension extends Extension {
         }
         Main.panel.addToStatusArea(areaKey, trayItem, position, 'right');
         debug(`Added TrayItem: ${uniqueId} as ${areaKey} at position ${position}`);
+        this._applyOverflow();
     }
 
     _onItemUnregistered(uniqueId) {
@@ -2291,6 +2441,7 @@ export default class StatusTrayExtension extends Extension {
         trayItem._destroyedInternally = true;
         trayItem.destroy();
         debug(`Removed TrayItem: ${uniqueId}`);
+        this._applyOverflow();
     }
 
     _refreshItems() {
@@ -2324,12 +2475,14 @@ export default class StatusTrayExtension extends Extension {
 
         if (itemsAdded)
             this._scheduleReorder();
+        this._applyOverflow();
     }
 
     _refreshIconStyles() {
         for (const [key, item] of this._items) {
             item._applySymbolicStyle();
         }
+        this._applyOverflow();
     }
 
     _refreshIcons() {
@@ -2342,6 +2495,7 @@ export default class StatusTrayExtension extends Extension {
             if (overrides[item._appId] || item._usingOverrideIcon)
                 item._updateIcon();
         }
+        this._applyOverflow();
     }
 
     _scheduleReorder() {
@@ -2457,5 +2611,76 @@ export default class StatusTrayExtension extends Extension {
         this._items = reordered;
 
         debug(`Reordered ${entries.length} items without recreation`);
+        this._applyOverflow();
+    }
+
+    /**
+     * Apply the "overflow" feature: when enabled and the number of tray items
+     * exceeds the user's inline limit, the excess items are hidden in place
+     * and an OverflowButton (anchored at the rightmost slot of our tray range)
+     * presents them as submenu rows. Safe to call at any time; idempotent.
+     */
+    _applyOverflow() {
+        if (!this._settings)
+            return;
+
+        const enabled = this._settings.get_boolean('overflow-enabled');
+        const inlineCount = Math.max(1, this._settings.get_int('overflow-inline-count'));
+
+        const entries = [...this._items.values()];
+        const rightBox = Main.panel._rightBox;
+
+        const tearDown = () => {
+            // Reveal everything we manage; destroy the overflow button.
+            for (const trayItem of entries) {
+                const container = trayItem.container || trayItem;
+                container.show();
+            }
+            if (this._overflowButton) {
+                this._overflowButton.destroy();
+                this._overflowButton = null;
+            }
+        };
+
+        if (!enabled || entries.length <= inlineCount) {
+            tearDown();
+            return;
+        }
+
+        const inline = entries.slice(0, inlineCount);
+        const overflowed = entries.slice(inlineCount);
+
+        for (const trayItem of inline) {
+            const container = trayItem.container || trayItem;
+            container.show();
+        }
+        for (const trayItem of overflowed) {
+            const container = trayItem.container || trayItem;
+            container.hide();
+        }
+
+        if (!this._overflowButton) {
+            this._overflowButton = new OverflowButton(this.path, this._settings);
+            let areaKey = 'StatusTray-Overflow';
+            let counter = 2;
+            while (Main.panel.statusArea[areaKey]) {
+                areaKey = `StatusTray-Overflow-${counter}`;
+                counter++;
+            }
+            this._overflowAreaKey = areaKey;
+            Main.panel.addToStatusArea(areaKey, this._overflowButton, entries.length, 'right');
+        } else {
+            // icon-mode may have changed since last apply; re-pick asset.
+            this._overflowButton.updateOverflowIcon();
+        }
+
+        // Keep the overflow button at the rightmost slot relative to our
+        // managed items (hidden containers still occupy their slot).
+        const overflowContainer = this._overflowButton.container || this._overflowButton;
+        if (overflowContainer.get_parent() === rightBox) {
+            rightBox.set_child_at_index(overflowContainer, entries.length);
+        }
+
+        this._overflowButton.setOverflowedItems(overflowed);
     }
 }

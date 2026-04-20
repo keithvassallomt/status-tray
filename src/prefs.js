@@ -1576,6 +1576,42 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         appearanceGroup.add(iconModeRow);
 
+        const overflowGroup = new Adw.PreferencesGroup({
+            title: 'Panel Overflow',
+            description: 'Collapse extra tray icons into an overflow menu at the right of the tray',
+        });
+        page.add(overflowGroup);
+
+        const overflowEnabledRow = new Adw.SwitchRow({
+            title: 'Enable overflow icon',
+            subtitle: 'When there are more tray icons than the limit below, extras collapse into a single overflow button',
+            active: this._settings.get_boolean('overflow-enabled'),
+        });
+        overflowEnabledRow.connect('notify::active', () => {
+            this._settings.set_boolean('overflow-enabled', overflowEnabledRow.get_active());
+        });
+        overflowGroup.add(overflowEnabledRow);
+
+        const overflowCountRow = new Adw.SpinRow({
+            title: 'Inline icon limit',
+            subtitle: 'How many icons stay in the panel before the rest overflow',
+            adjustment: new Gtk.Adjustment({
+                lower: 1,
+                upper: 20,
+                step_increment: 1,
+                page_increment: 1,
+                value: this._settings.get_int('overflow-inline-count'),
+            }),
+            sensitive: overflowEnabledRow.get_active(),
+        });
+        overflowCountRow.connect('notify::value', () => {
+            this._settings.set_int('overflow-inline-count', overflowCountRow.get_value());
+        });
+        overflowEnabledRow.connect('notify::active', () => {
+            overflowCountRow.set_sensitive(overflowEnabledRow.get_active());
+        });
+        overflowGroup.add(overflowCountRow);
+
         this._appsGroup = new Adw.PreferencesGroup({
             title: 'Tray Apps',
             description: 'Drag to reorder. Click the icon to customize. Toggle to show/hide.',

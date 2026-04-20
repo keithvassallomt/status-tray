@@ -4,6 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.7] - 2026-04-20
+
+### Added
+- Optional panel overflow. When enabled from preferences, any tray icons beyond a user-chosen inline limit collapse into a single overflow button at the right end of the tray. Each collapsed app is accessible as an inline submenu that lazily loads the app's own menu on first open, with live updates to the row's icon and title. The overflow button ships its own symbolic and full-colour glyphs that track the global Icon Style setting. Disabled by default.
+
 ## [1.6] - 2026-04-17
 
 ### Added
