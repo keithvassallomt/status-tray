@@ -16,6 +16,7 @@ A GNOME Shell extension that brings back the system tray for applications using 
 - **Dual Icon Modes** - Choose between symbolic (monochrome) or original (colored) icons
 - **Highly Customizable** - Per-app icon overrides, effects, and ordering
 - **Drag & Drop Reordering** - Arrange tray icons in your preferred order
+- **Panel Overflow** - Optionally collapse extra icons into a single overflow button
 - **Live Updates** - All changes apply instantly without restart
 
 ## Compatibility
@@ -107,11 +108,26 @@ Choose how tray icons are displayed:
 
 Override any app's icon with a system icon or custom image:
 
-1. Click the icon picker button next to an app
+1. Click the icon picker button next to an app to open the picker dialog
 2. Search for a system icon or click "Choose File..." for a custom image
-3. Click "Apply" to save
+3. Optionally toggle **Use as Fallback Only**, **Ignore App Status Icons**, or **Match by App Name** for this app
+4. Close the dialog when you're done — changes are saved as you pick them
 
 ![Icon picker dialog](assets/screenshot-icon-picker.png)
+
+### Panel Overflow
+
+Tight on panel space? Enable **Panel Overflow** from preferences to keep only
+the first *N* tray icons inline; the rest collapse under a single overflow
+button at the right of the tray. Click it to get a menu that lists each
+collapsed app, with each app's full menu available inline as a submenu.
+
+- **Enable overflow icon** - Turn the feature on or off (disabled by default)
+- **Inline icon limit** - Choose how many icons stay directly in the panel
+  (1-20) before the rest overflow
+
+The overflow button honours the global Icon Style setting, showing a symbolic
+or a full-colour glyph to match your other tray icons.
 
 ### Icon Effects
 

@@ -31,11 +31,12 @@ This document provides comprehensive technical documentation for developers and 
 - **DBusMenu integration**: Full support for dynamic application menus
 - **Dual icon modes**: Symbolic (monochrome) or original (colored) icons
 - **Extensive customization**: Per-app icon overrides, effects, and ordering
+- **Panel overflow**: Optional collapse of excess tray icons into a single overflow button
 - **Live updates**: All settings changes apply immediately without restart
 
 ### Supported GNOME Versions
 
-- GNOME 45, 46, 47, 48, 49
+- GNOME 45, 46, 47, 48, 49, 50
 
 ### Extension Metadata
 
@@ -99,12 +100,13 @@ This document provides comprehensive technical documentation for developers and 
 ```
 Status Tray/
 ├── src/
-│   ├── extension.js          # Main extension code (~2270 lines)
+│   ├── extension.js          # Main extension code
 │   │   ├── TrayItem          # Individual tray icon component
+│   │   ├── OverflowButton    # Panel overflow button and submenu host
 │   │   ├── StatusNotifierWatcher  # D-Bus service implementation
 │   │   └── StatusTrayExtension    # Main controller
 │   │
-│   ├── prefs.js              # Settings UI (~1750 lines)
+│   ├── prefs.js              # Settings UI
 │   │   ├── AppRow            # Individual app settings row
 │   │   ├── IconPickerDialog  # Icon selection dialog
 │   │   ├── IconEffectDialog  # Effect customization dialog
@@ -112,6 +114,9 @@ Status Tray/
 │   │
 │   ├── metadata.json         # Extension metadata
 │   ├── stylesheet.css        # Panel icon styling
+│   ├── icons/
+│   │   ├── status-tray.svg            # Full-colour overflow glyph
+│   │   └── status-tray-symbolic.svg   # Symbolic overflow glyph
 │   └── schemas/
 │       ├── org.gnome.shell.extensions.status-tray.gschema.xml
 │       └── gschemas.compiled
@@ -120,9 +125,11 @@ Status Tray/
 │   └── status-tray.md        # This file
 │
 ├── dev/
-│   └── plan.md               # Implementation roadmap
+│   ├── compliance.md         # GNOME EGO review checklist
+│   └── preview-icon.js       # GJS tool for previewing bundled icons
 │
 ├── install.sh                # Installation script
+├── package.sh                # Packaging script for extensions.gnome.org
 ├── changelog.md              # Release notes
 └── README.md                 # User documentation
 ```
@@ -131,7 +138,7 @@ Status Tray/
 
 ## Core Components
 
-### TrayItem (`extension.js`, lines 166-1240)
+### TrayItem (`extension.js`)
 
 Represents a single tray icon in the panel. Extends `PanelMenu.Button`.
 
@@ -189,7 +196,7 @@ new TrayItem(
 
 ---
 
-### StatusNotifierWatcher (`extension.js`, lines 1248-1549)
+### StatusNotifierWatcher (`extension.js`)
 
 Implements the D-Bus service that applications use to register tray icons.
 
@@ -242,7 +249,7 @@ dbus.call('org.kde.StatusNotifierWatcher',
 
 ---
 
-### StatusTrayExtension (`extension.js`, lines 1557-1833)
+### StatusTrayExtension (`extension.js`)
 
 Main extension controller. Extends `Extension.Extension`.
 
@@ -251,25 +258,86 @@ Main extension controller. Extends `Extension.Extension`.
 | Method | Description |
 |--------|-------------|
 | `enable()` | Start watcher, load settings, create items |
-| `disable()` | Destroy all items, stop watcher |
+| `disable()` | Destroy all items and the overflow button, stop watcher |
 | `_refreshItems()` | Recreate items (after settings change) |
 | `_reorderItems()` | Update panel positions based on app-order |
+| `_applyOverflow()` | Show/hide inline items and (re)build the overflow button |
 
 #### Settings Handlers
 
 ```javascript
 // Setting change handlers
-'changed::disabled-apps'         → _refreshItems()
-'changed::icon-mode'            → _refreshIconStyles()
-'changed::icon-overrides'       → _refreshIcons()  // only updates affected items
-'changed::icon-effect-overrides' → _refreshIconStyles()
-'changed::app-order'            → _reorderItems()
+'changed::disabled-apps'           → _refreshItems()
+'changed::icon-mode'               → _refreshIconStyles()
+'changed::icon-overrides'          → _refreshIcons()  // only updates affected items
+'changed::icon-effect-overrides'   → _refreshIconStyles()
+'changed::icon-fallback-overrides' → _refreshIcons()
+'changed::app-order'               → _reorderItems()
+'changed::title-aliases'           → _refreshItems() (+ re-resolve each appId)
+'changed::overflow-enabled'        → _applyOverflow()
+'changed::overflow-inline-count'   → _applyOverflow()
 ```
 
 **Note**: `_refreshIcons()` only calls `_updateIcon()` on items that have an
 active override or were previously showing one (override just removed). This
 prevents stale `IconThemePath` lookups from corrupting unrelated icons,
 especially for Electron/Flatpak apps with temporary directories.
+
+Every lifecycle path that changes the set of inline items
+(`_onItemRegistered`, `_onItemUnregistered`, `_refreshItems`, `_refreshIcons`,
+`_refreshIconStyles`, `_reorderItems`, and the external-destroy handler)
+calls `_applyOverflow()` at the end to keep the overflow button's contents
+and position in sync.
+
+---
+
+### OverflowButton (`extension.js`)
+
+A `PanelMenu.Button` that holds the tray's overflow items. Created on demand
+by `StatusTrayExtension._applyOverflow()` when `overflow-enabled` is `true`
+and the number of active `TrayItem`s exceeds `overflow-inline-count`.
+
+#### Responsibilities
+
+- Renders one of two bundled glyphs (`icons/status-tray.svg` or
+  `icons/status-tray-symbolic.svg`) depending on the current `icon-mode`.
+- Builds one `PopupMenu.PopupSubMenuMenuItem` per overflowed `TrayItem`,
+  labelled with the app's display name and prefixed with a clone of that
+  `TrayItem`'s gicon.
+- Each row's submenu is seeded with a "Loading..." placeholder and is
+  lazily populated on first open by invoking the source `TrayItem`'s
+  DBusMenu fetch against the submenu (see *Menu System* below).
+- Listens to each overflowed `TrayItem`'s `display-changed` signal and
+  refreshes the row's label, icon, and cached menu contents live.
+
+#### Interaction with TrayItem
+
+`TrayItem` exposes its menu-build logic generically:
+
+```javascript
+// TrayItem methods
+_loadMenu(targetMenu = this.menu)
+_fetchMenuLayout(targetMenu = this.menu)
+_buildMenuFromLayout(layout, targetMenu = this.menu)
+_addMenuItem(item, targetMenu = this.menu)
+```
+
+In normal (inline) use, `targetMenu` defaults to `this.menu` — the TrayItem's
+own panel menu. In the overflow case, `OverflowButton` passes the row's
+`PopupSubMenu` as the target so the DBusMenu tree renders there instead.
+
+`TrayItem` emits a lightweight `display-changed` signal after its SNI
+properties change (Title/ToolTip re-resolution, icon updates), which
+`OverflowButton` uses to keep rows in sync without full rebuilds.
+
+#### Nested-submenu caveat
+
+Each `PopupSubMenuMenuItem` constructed by `_addMenuItem` has its
+`_getTopMenu()` overridden to return the immediate containing menu rather
+than the panel top menu. This scopes the "only one submenu open at a time"
+rule locally; without it, opening an app's own submenu (e.g. NordVPN's
+`Settings`) inside an overflow row would trigger the top menu to close the
+outer breadcrumb. See `_addMenuItem` in `extension.js` for details.
 
 ---
 
@@ -514,7 +582,11 @@ _activateMenuItem(itemId) {
 | `app-order` | `as` | `[]` | Custom app ordering |
 | `icon-overrides` | `a{ss}` | `{}` | App ID → icon name/path |
 | `icon-fallback-overrides` | `as` | `[]` | App IDs where override is fallback-only |
+| `icon-lock-overrides` | `as` | `[]` | App IDs whose override ignores app-side icon changes |
 | `icon-effect-overrides` | `a{ss}` | `{}` | App ID → JSON effect config |
+| `title-aliases` | `a{ss}` | `{}` | Display name → stable app ID (for apps that randomize SNI IDs) |
+| `overflow-enabled` | `b` | `false` | Enable the panel overflow button |
+| `overflow-inline-count` | `i` | `3` | Inline icon limit before items spill into the overflow menu |
 
 ### Effect Override Format
 
@@ -556,22 +628,31 @@ settings.connect('changed::icon-mode', () => {
 
 ```
 StatusTrayPreferences (Adw.PreferencesWindow)
-└── Adw.PreferencesPage
-    └── Adw.PreferencesGroup
-        ├── Icon Mode Row (Adw.ActionRow + Gtk.ComboBoxText)
-        └── App Rows List (Gtk.ListBox)
-            ├── AppRow (Gtk.ListBoxRow)
-            │   ├── Drag Handle
-            │   ├── Icon Preview
-            │   ├── App Name Label
-            │   ├── Enable/Disable Switch
-            │   ├── Icon Picker Button → IconPickerDialog
-            │   └── Effect Tuner Button → IconEffectDialog
-            ├── AppRow
-            └── ...
+└── Adw.PreferencesPage ("General")
+    ├── Adw.PreferencesGroup ("Appearance")
+    │   └── Icon Style (Adw.ComboRow) → icon-mode
+    │
+    ├── Adw.PreferencesGroup ("Panel Overflow")
+    │   ├── Enable overflow icon (Adw.SwitchRow) → overflow-enabled
+    │   └── Inline icon limit (Adw.SpinRow)      → overflow-inline-count
+    │
+    ├── Adw.PreferencesGroup ("Tray Apps")
+    │   └── App Rows List
+    │       ├── AppRow (Gtk.ListBoxRow)
+    │       │   ├── Drag Handle
+    │       │   ├── Icon Preview
+    │       │   ├── App Name Label
+    │       │   ├── Enable/Disable Switch
+    │       │   ├── Icon Picker Button → IconPickerDialog
+    │       │   └── Effect Tuner Button → IconEffectDialog
+    │       ├── AppRow
+    │       └── ...
+    │
+    └── Adw.PreferencesGroup ("About")
+        └── Name/version/source links
 ```
 
-### AppRow (`prefs.js`, lines 62-589)
+### AppRow (`prefs.js`)
 
 Each row represents a discovered tray application.
 
@@ -584,20 +665,25 @@ Each row represents a discovered tray application.
 - Enable switch updates disabled-apps setting
 ```
 
-### IconPickerDialog (`prefs.js`, lines 594-906)
+### IconPickerDialog (`prefs.js`)
 
-Modal dialog for selecting custom icons.
+Modal `Adw.Dialog` for selecting custom icons and tuning per-app override
+flags. Stays open across selections so multiple settings can be adjusted in
+one visit; close the dialog (titlebar button or Esc) when done.
 
 ```javascript
 // Features
 - Searchable grid of system icons
 - Preview of current selection
 - "Choose File..." button for custom icons
+- "Use as Fallback Only" switch → icon-fallback-overrides
+- "Ignore App Status Icons" switch → icon-lock-overrides
+- "Match by App Name" switch → title-aliases
 - "Reset to Default" button
-- Saves to icon-overrides setting
+- All changes write straight to GSettings as they're made
 ```
 
-### IconEffectDialog (`prefs.js`, lines 913-1459)
+### IconEffectDialog (`prefs.js`)
 
 Modal dialog for customizing icon effects.
 

@@ -9,6 +9,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Optional panel overflow. When enabled from preferences, any tray icons beyond a user-chosen inline limit collapse into a single overflow button at the right end of the tray. Each collapsed app is accessible as an inline submenu that lazily loads the app's own menu on first open, with live updates to the row's icon and title. The overflow button ships its own symbolic and full-colour glyphs that track the global Icon Style setting. Disabled by default.
 
+### Changed
+- Icon customization dialog no longer closes when an icon is picked (grid, "Choose File...", or "Reset to Default"). The dialog stays open so fallback/lock/title-alias switches remain reachable in the same visit; dismiss via the titlebar close button when finished. Selections continue to save to GSettings as they are made.
+- Preferences About row now uses the bundled Status Tray icon instead of the generic `preferences-system-symbolic` glyph.
+
 ## [1.6] - 2026-04-17
 
 ### Added

@@ -966,8 +966,13 @@ const IconPickerDialog = GObject.registerClass({
         this._previewRow.set_title(this._getIconDisplayName(iconName));
         this._previewRow.set_subtitle('Custom override');
 
+        // Re-expose the per-override switches in case the user just hit Reset;
+        // they're hidden by _clearOverride and need to come back when a new
+        // override is chosen.
+        this._fallbackRow.set_visible(true);
+        this._lockRow.set_visible(true);
+
         this.emit('icon-selected', iconName);
-        this.close();
     }
 
     _chooseFile() {
@@ -1029,7 +1034,6 @@ const IconPickerDialog = GObject.registerClass({
         this._previewRow.set_subtitle('Using app-provided icon');
 
         this.emit('icon-selected', '');
-        this.close();
     }
 });
 
@@ -1652,7 +1656,11 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             subtitle: 'Automatic system tray for StatusNotifierItem apps',
         });
         const aboutIcon = new Gtk.Image({
-            icon_name: 'preferences-system-symbolic',
+            gicon: new Gio.FileIcon({
+                file: Gio.File.new_for_path(
+                    GLib.build_filenamev([this.path, 'icons', 'status-tray.svg'])
+                ),
+            }),
             pixel_size: 48,
         });
         aboutRow.add_prefix(aboutIcon);
