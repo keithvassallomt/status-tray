@@ -1542,7 +1542,7 @@ const IconEffectDialog = GObject.registerClass({
 export default class StatusTrayPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         this._window = window;
-        window.set_default_size(890, 750);
+        window.set_default_size(890, 900);
         this._settings = this.getSettings();
         this._bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
         this._signalIds = [];
@@ -1678,7 +1678,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             activatable: true,
         });
         linkRow.add_suffix(new Gtk.Image({
-            icon_name: 'external-link-symbolic',
+            icon_name: 'insert-link-symbolic',
             valign: Gtk.Align.CENTER,
         }));
         linkRow.connect('activated', () => {
