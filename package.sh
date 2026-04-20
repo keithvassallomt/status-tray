@@ -30,6 +30,7 @@ zip -r "$OUTPUT_FILE" \
     metadata.json \
     stylesheet.css \
     schemas/*.gschema.xml \
+    icons/*.svg \
     --exclude "schemas/gschemas.compiled" \
     --exclude "*.pyc" \
     --exclude "__pycache__/*" \
