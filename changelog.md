@@ -4,6 +4,13 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.8] - 2026-05-04
+
+### Fixed
+- Fixed tray icons going blank for apps whose `IconName` resolves to a FreeDesktop category outside the previously-searched set (e.g. `folder-remote-symbolic` in `places/`). The icon theme search now covers `places`, `mimetypes`, `emotes`, `categories`, `emblems`, `ui`, and the `applications` alias in addition to the existing categories.
+- Fixed the GTK fall-through path silently rendering nothing when the manual theme walk missed an icon. The fall-through now resolves via `St.IconTheme.lookup_icon` and routes through the working `gicon` path; the bare `set_icon_name` call is now a true last resort.
+- Fixed Ubuntu's update-notifier icons (and other SNI clients that sit at `Status='Passive'` between events) being shown in the tray. Per the StatusNotifierItem spec, Passive items are now hidden until the app transitions to Active or NeedsAttention. Overflow slot accounting ignores Passive items so they don't push real icons into the overflow popup.
+
 ## [1.7] - 2026-04-20
 
 ### Added

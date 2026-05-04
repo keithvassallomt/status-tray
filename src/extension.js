@@ -128,7 +128,19 @@ function findIconInTheme(iconName) {
         iconDirs.push(`${GLib.get_home_dir()}/.local/share/icons`);
 
         const themes = _getThemeChain(themeName);
-        const categories = ['apps', 'status', 'legacy', 'devices', 'actions'];
+        const categories = [
+            'apps', 'applications',
+            'status',
+            'devices',
+            'actions',
+            'places',
+            'mimetypes',
+            'emotes',
+            'categories',
+            'emblems',
+            'ui',
+            'legacy',
+        ];
         const subdirs = [];
         for (const cat of categories) {
             subdirs.push(`scalable/${cat}`);
@@ -305,6 +317,7 @@ const TrayItem = GObject.registerClass({
     Signals: {
         'appid-resolved': { param_types: [GObject.TYPE_STRING] },
         'display-changed': {},
+        'passive-changed': {},
     },
 }, class TrayItem extends PanelMenu.Button {
     _init(busName, objectPath, settings) {
@@ -326,6 +339,7 @@ const TrayItem = GObject.registerClass({
 
         this._tempFilePath = null;
         this._fallbackOverrideIcon = null;
+        this._isPassive = false;
 
         this._icon = new St.Icon({
             style_class: 'system-status-icon status-tray-icon',
@@ -406,6 +420,12 @@ const TrayItem = GObject.registerClass({
                     displayMayHaveChanged = true;
                 }
 
+                if (props.includes('Status')) {
+                    const statusVariant = this._proxy.get_cached_property('Status');
+                    if (statusVariant)
+                        this._applyStatus(statusVariant.deep_unpack());
+                }
+
                 if (props.some(p => p.startsWith('Icon'))) {
                     // If the user locked the override, ignore property changes
                     let locked = false;
@@ -458,6 +478,13 @@ const TrayItem = GObject.registerClass({
         this._resolveAppId();
 
         this._updateIcon();
+
+        // Per SNI spec, Passive items should not be shown. Some apps (Ubuntu's
+        // update-notifier in particular) sit at Passive between events and
+        // expect the host to hide them until they go Active/NeedsAttention.
+        const statusVariant = this._proxy.get_cached_property('Status');
+        if (statusVariant)
+            this._applyStatus(statusVariant.deep_unpack());
     }
 
     _computeDisplayName() {
@@ -813,6 +840,7 @@ const TrayItem = GObject.registerClass({
             (conn, sender, path, iface, signal, params) => {
                 const [status] = params.deep_unpack();
                 debug(`NewStatus signal for ${this._busName}: ${status}`);
+                this._applyStatus(status);
             }
         );
         this._signalIds.push(newStatusId);
@@ -989,6 +1017,19 @@ const TrayItem = GObject.registerClass({
         );
     }
 
+    _applyStatus(status) {
+        const passive = status === 'Passive';
+        if (passive === this._isPassive)
+            return;
+        this._isPassive = passive;
+        const container = this.container || this;
+        if (passive)
+            container.hide();
+        else
+            container.show();
+        this.emit('passive-changed');
+    }
+
     _setIcon(iconName) {
         debug(`_setIcon called with: ${iconName}, themePath: ${this._iconThemePath}`);
 
@@ -1053,9 +1094,30 @@ const TrayItem = GObject.registerClass({
             this._clearIconExcept('gicon');
             this._applySymbolicStyle();
         } else {
-            // Let St.Icon / GTK resolve the icon via the full theme engine
-            // (handles inheritance, legacy dirs, symbolic fallbacks, etc.)
+            // Manual walk missed it — ask St.IconTheme to resolve via the
+            // full FDO engine, then route through the gicon path. The bare
+            // set_icon_name fall-through has been observed to allocate the
+            // panel slot but render no glyph (icon-mode='original'), so we
+            // only use it as a true last resort.
             debug(`Using GTK icon resolution for: ${iconName}`);
+
+            let resolvedFile = null;
+            try {
+                const stTheme = new St.IconTheme();
+                const paintable = stTheme.lookup_icon(iconName, 16, 0);
+                if (paintable)
+                    resolvedFile = paintable.get_file?.() ?? paintable.file ?? null;
+            } catch (e) {
+                debug(`St.IconTheme lookup failed for ${iconName}: ${e.message}`);
+            }
+
+            if (resolvedFile) {
+                this._icon.set_gicon(new Gio.FileIcon({ file: resolvedFile }));
+                this._clearIconExcept('gicon');
+                this._applySymbolicStyle();
+                return;
+            }
+
             this._icon.set_icon_name(iconName);
             this._clearIconExcept('icon_name');
             this._applySymbolicStyle();
@@ -2399,6 +2461,10 @@ export default class StatusTrayExtension extends Extension {
             this._refreshItems();
         });
 
+        trayItem.connect('passive-changed', () => {
+            this._applyOverflow();
+        });
+
         // Detect when GNOME Shell externally disposes the TrayItem (e.g. during
         // suspend/resume). Clean up our references so we don't later try to
         // call methods on a disposed GObject. Internal destroys (from our own
@@ -2627,7 +2693,10 @@ export default class StatusTrayExtension extends Extension {
         const enabled = this._settings.get_boolean('overflow-enabled');
         const inlineCount = Math.max(1, this._settings.get_int('overflow-inline-count'));
 
-        const entries = [...this._items.values()];
+        // Passive items aren't visible to the user; exclude them from slot
+        // accounting so they don't push real items into the overflow popup,
+        // and so tearDown's blanket .show() doesn't reveal them.
+        const entries = [...this._items.values()].filter(t => !t._isPassive);
         const rightBox = Main.panel._rightBox;
 
         const tearDown = () => {
