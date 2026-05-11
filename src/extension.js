@@ -1797,14 +1797,40 @@ class OverflowButton extends PanelMenu.Button {
         const src = trayItem._icon;
         if (!src)
             return;
+
+        // Reset every potential source so switching between branches (e.g.
+        // pixmap → named icon on refresh) doesn't leave stale state behind.
+        subItem.icon.gicon = null;
+        subItem.icon.icon_name = null;
+        subItem.icon.content = null;
+        subItem.icon.set_size(-1, -1);
+
         const gicon = src.get_gicon?.();
         if (gicon) {
             subItem.icon.set_gicon(gicon);
-        } else if (src.icon_name) {
-            subItem.icon.set_icon_name(src.icon_name);
-        } else {
-            subItem.icon.set_icon_name(FALLBACK_ICON_NAME);
+            return;
         }
+        if (src.icon_name) {
+            subItem.icon.set_icon_name(src.icon_name);
+            return;
+        }
+        // Pixmap-backed icons (Electron/Flatpak apps, IconPixmap fallback) live
+        // on _icon.content as an St.ImageContent — gicon and icon_name are
+        // both null. Clutter.Content is shareable across actors, so mirror it
+        // onto the menu row. Explicit size is required because Clutter.Content
+        // has no intrinsic size when assigned via the content property.
+        if (src.content) {
+            const scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+            const size = 16 * scaleFactor;
+            subItem.icon.set({
+                content: src.content,
+                width: size,
+                height: size,
+                content_gravity: Clutter.ContentGravity.RESIZE_ASPECT,
+            });
+            return;
+        }
+        subItem.icon.set_icon_name(FALLBACK_ICON_NAME);
     }
 
     _refreshRow(trayItem) {
