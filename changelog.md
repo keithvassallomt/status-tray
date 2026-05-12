@@ -4,6 +4,12 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- Fixed overflow menu icons disappearing and randomly re-appearing for pixmap-backed apps (Electron/Flatpak and `IconPixmap`-fallback clients). Menu rows now mirror the tray icon's `Clutter.Content` when `gicon` and `icon_name` are both null, and reset every potential icon source before each refresh so switching branches (e.g. pixmap → named) no longer leaves stale state behind.
+- Fixed duplicate tray icons for apps like Cloudflare's `warp-taskbar` that register via the spec-canonical `org.kde.StatusNotifierItem-PID-ID` well-known name. The watcher's bus-address discriminator regex now accepts hyphens (per the D-Bus name grammar), so both the proactive scan and `RegisterStatusNotifierItem` resolve to the same unique connection name and the existing dedup catches the second registration. Thanks to [@rncoll7](https://github.com/rncoll7) for the report and fix.
+
 ## [1.8] - 2026-05-04
 
 ### Fixed

@@ -243,6 +243,8 @@ const WATCHER_BUS_NAME = 'org.kde.StatusNotifierWatcher';
 const WATCHER_OBJECT_PATH = '/StatusNotifierWatcher';
 const DEFAULT_ITEM_OBJECT_PATH = '/StatusNotifierItem';
 
+// D-Bus well-known name grammar: elements use [A-Za-z0-9_-]. Hyphens are
+// required for canonical SNI names like `org.kde.StatusNotifierItem-PID-ID`.
 const BUS_ADDRESS_REGEX = /^[a-zA-Z_-][a-zA-Z0-9_-]*(\.[a-zA-Z_-][a-zA-Z0-9_-]*)+$/;
 
 let _sniInterfaceInfo = null;
