@@ -29,6 +29,10 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 const DEBUG = false;
 const FALLBACK_ICON_NAME = 'image-loading-symbolic';
 const PIXMAPS_FORMAT = Cogl.PixelFormat.ARGB_8888;
+const OVERFLOW_PREVIEW_LIMIT = 4;
+const OVERFLOW_PREVIEW_SIZE = 18;
+const OVERFLOW_PREVIEW_GRID_ICON_SIZE = 11;
+const OVERFLOW_PREVIEW_STACK_ICON_SIZE = 13;
 
 function debug(msg) {
     if (DEBUG) {
@@ -1180,7 +1184,7 @@ const TrayItem = GObject.registerClass({
         this._applySymbolicStyle();
     }
 
-    _applySymbolicStyle(targetIcon = this._icon) {
+    _applySymbolicStyle(targetIcon = this._icon, iconSize = 16) {
         const iconName = this._icon.icon_name;
         const isSymbolicIcon = iconName && iconName.endsWith('-symbolic');
         // Only force regular style when we loaded a file via gicon — this
@@ -1200,7 +1204,7 @@ const TrayItem = GObject.registerClass({
         const iconMode = this._settings?.get_string('icon-mode') ?? 'symbolic';
         if (iconMode !== 'symbolic') {
             targetIcon.clear_effects();
-            targetIcon.set_style(`icon-size: 16px;${iconStyleCss}`);
+            targetIcon.set_style(`icon-size: ${iconSize}px;${iconStyleCss}`);
             if (isPanelIcon)
                 this.emit('display-changed');
             return;
@@ -1270,7 +1274,7 @@ const TrayItem = GObject.registerClass({
             }
         }
 
-        targetIcon.set_style(`icon-size: 16px;${iconStyleCss}`);
+        targetIcon.set_style(`icon-size: ${iconSize}px;${iconStyleCss}`);
         if (isPanelIcon)
             this.emit('display-changed');
     }
@@ -1796,11 +1800,9 @@ class OverflowButton extends PanelMenu.Button {
 
         this._extensionPath = extensionPath;
         this._settings = settings;
+        this._overflowedItems = [];
+        this._iconActor = null;
 
-        this._icon = new St.Icon({
-            style_class: 'system-status-icon status-tray-icon',
-        });
-        this.add_child(this._icon);
         this.add_style_class_name('status-tray-button');
         this.add_style_class_name('status-tray-overflow-button');
 
@@ -1812,6 +1814,20 @@ class OverflowButton extends PanelMenu.Button {
     }
 
     updateOverflowIcon() {
+        if (this._getOverflowIconStyle() === 'dynamic' && this._overflowedItems.length > 0) {
+            this._setIconActor(this._buildDynamicIcon());
+            return;
+        }
+
+        this._setIconActor(this._buildStaticIcon());
+    }
+
+    _getOverflowIconStyle() {
+        const style = this._settings?.get_string('overflow-icon-style') ?? 'dynamic';
+        return style === 'static' ? 'static' : 'dynamic';
+    }
+
+    _buildStaticIcon() {
         const mode = this._settings?.get_string('icon-mode') ?? 'symbolic';
         const fileName = mode === 'symbolic'
             ? 'status-tray-symbolic.svg'
@@ -1819,10 +1835,73 @@ class OverflowButton extends PanelMenu.Button {
         const file = Gio.File.new_for_path(
             GLib.build_filenamev([this._extensionPath, 'icons', fileName])
         );
-        this._icon.set_gicon(new Gio.FileIcon({ file }));
+        return new St.Icon({
+            style_class: 'system-status-icon status-tray-icon',
+            gicon: new Gio.FileIcon({ file }),
+        });
+    }
+
+    _buildDynamicIcon() {
+        const preview = new St.Widget({
+            style_class: 'system-status-icon status-tray-overflow-preview',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            width: OVERFLOW_PREVIEW_SIZE,
+            height: OVERFLOW_PREVIEW_SIZE,
+            layout_manager: new Clutter.FixedLayout(),
+        });
+        preview.set_size(OVERFLOW_PREVIEW_SIZE, OVERFLOW_PREVIEW_SIZE);
+
+        const items = this._overflowedItems.slice(0, OVERFLOW_PREVIEW_LIMIT);
+        const positions = this._getPreviewPositions(items.length);
+
+        for (let i = 0; i < items.length; i++) {
+            const { x, y, size } = positions[i];
+            const icon = new St.Icon({
+                style_class: 'status-tray-overflow-preview-icon',
+            });
+            icon.set_position(x, y);
+            icon.set_size(size, size);
+            this._applyTrayItemIcon(icon, items[i], size);
+            preview.add_child(icon);
+        }
+
+        return preview;
+    }
+
+    _getPreviewPositions(count) {
+        if (count === 1)
+            return [{ x: 1, y: 1, size: 16 }];
+        if (count === 2)
+            return [
+                { x: 0, y: 2, size: OVERFLOW_PREVIEW_STACK_ICON_SIZE },
+                { x: 6, y: 2, size: OVERFLOW_PREVIEW_STACK_ICON_SIZE },
+            ];
+        if (count === 3)
+            return [
+                { x: 0, y: 0, size: OVERFLOW_PREVIEW_GRID_ICON_SIZE },
+                { x: 7, y: 0, size: OVERFLOW_PREVIEW_GRID_ICON_SIZE },
+                { x: 4, y: 7, size: OVERFLOW_PREVIEW_GRID_ICON_SIZE },
+            ];
+        return [
+            { x: 0, y: 0, size: OVERFLOW_PREVIEW_GRID_ICON_SIZE },
+            { x: 7, y: 0, size: OVERFLOW_PREVIEW_GRID_ICON_SIZE },
+            { x: 0, y: 7, size: OVERFLOW_PREVIEW_GRID_ICON_SIZE },
+            { x: 7, y: 7, size: OVERFLOW_PREVIEW_GRID_ICON_SIZE },
+        ];
+    }
+
+    _setIconActor(actor) {
+        if (this._iconActor)
+            this._iconActor.destroy();
+
+        this._iconActor = actor;
+        this.add_child(actor);
     }
 
     setOverflowedItems(trayItems) {
+        this._overflowedItems = trayItems;
+
         // Disconnect from any TrayItems no longer in the overflow set before
         // rebuilding; connectObject/disconnectObject uses `this` as the owner.
         for (const trayItem of this._rows.keys()) {
@@ -1859,6 +1938,8 @@ class OverflowButton extends PanelMenu.Button {
                 this._refreshRow(trayItem);
             }, this);
         }
+
+        this.updateOverflowIcon();
     }
 
     _seedPlaceholder(menu) {
@@ -1870,24 +1951,28 @@ class OverflowButton extends PanelMenu.Button {
     }
 
     _applyRowIcon(subItem, trayItem) {
+        this._applyTrayItemIcon(subItem.icon, trayItem);
+    }
+
+    _applyTrayItemIcon(targetIcon, trayItem, iconSize = 16) {
         const src = trayItem._icon;
         if (!src)
-            return;
+            return false;
 
         // Reset every potential source so switching between branches (e.g.
         // pixmap → named icon on refresh) doesn't leave stale state behind.
-        subItem.icon.gicon = null;
-        subItem.icon.icon_name = null;
-        subItem.icon.content = null;
-        subItem.icon.set_size(-1, -1);
+        targetIcon.gicon = null;
+        targetIcon.icon_name = null;
+        targetIcon.content = null;
+        targetIcon.set_size(-1, -1);
 
         let sourceApplied = false;
         const gicon = src.get_gicon?.();
         if (gicon) {
-            subItem.icon.set_gicon(gicon);
+            targetIcon.set_gicon(gicon);
             sourceApplied = true;
         } else if (src.icon_name) {
-            subItem.icon.set_icon_name(src.icon_name);
+            targetIcon.set_icon_name(src.icon_name);
             sourceApplied = true;
         } else if (src.content) {
             // Pixmap-backed icons (Electron/Flatpak apps, IconPixmap fallback)
@@ -1897,26 +1982,28 @@ class OverflowButton extends PanelMenu.Button {
             // Clutter.Content has no intrinsic size when assigned via the
             // content property.
             const scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-            const size = 16 * scaleFactor;
-            subItem.icon.set({
+            const scaledSize = iconSize * scaleFactor;
+            targetIcon.set({
                 content: src.content,
-                width: size,
-                height: size,
+                width: scaledSize,
+                height: scaledSize,
                 content_gravity: Clutter.ContentGravity.RESIZE_ASPECT,
             });
             sourceApplied = true;
         }
 
         if (!sourceApplied) {
-            subItem.icon.set_icon_name(FALLBACK_ICON_NAME);
-            return;
+            targetIcon.set_icon_name(FALLBACK_ICON_NAME);
+            targetIcon.set_style(`icon-size: ${iconSize}px;`);
+            return false;
         }
 
         // Mirror the panel icon's symbolic/recolour/effect treatment onto the
         // row so the overflow popup matches the per-app tuning. Delegates to
         // the same routine the panel uses; the trayItem reads its own _icon's
         // properties to decide style/effects.
-        trayItem._applySymbolicStyle?.(subItem.icon);
+        trayItem._applySymbolicStyle?.(targetIcon, iconSize);
+        return true;
     }
 
     _refreshRow(trayItem) {
@@ -1926,6 +2013,7 @@ class OverflowButton extends PanelMenu.Button {
         const label = trayItem._computeDisplayName?.() || trayItem._appId || 'Unknown';
         subItem.label.text = label;
         this._applyRowIcon(subItem, trayItem);
+        this.updateOverflowIcon();
         // Force the submenu to refetch on next open so menu contents stay
         // in sync if the app's menu tree changed. Re-seed the placeholder
         // so the submenu is still openable (see note in setOverflowedItems).
@@ -1937,6 +2025,8 @@ class OverflowButton extends PanelMenu.Button {
         for (const trayItem of this._rows.keys())
             trayItem.disconnectObject(this);
         this._rows.clear();
+        this._overflowedItems = [];
+        this._iconActor = null;
         super.destroy();
     }
 });
@@ -2485,6 +2575,10 @@ export default class StatusTrayExtension extends Extension {
             },
             'changed::overflow-inline-count', () => {
                 debug('overflow-inline-count setting changed');
+                this._applyOverflow();
+            },
+            'changed::overflow-icon-style', () => {
+                debug('overflow-icon-style setting changed');
                 this._applyOverflow();
             },
             this

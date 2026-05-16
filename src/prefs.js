@@ -1596,6 +1596,25 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         });
         overflowGroup.add(overflowEnabledRow);
 
+        const overflowIconRow = new Adw.ComboRow({
+            title: 'Overflow button icon',
+            subtitle: 'Preview hidden icons or use the standard tray icon',
+            sensitive: overflowEnabledRow.get_active(),
+        });
+        const overflowIconModel = new Gtk.StringList();
+        overflowIconModel.append('Dynamic preview');
+        overflowIconModel.append('Static icon');
+        overflowIconRow.set_model(overflowIconModel);
+
+        const currentOverflowIconStyle = this._settings.get_string('overflow-icon-style');
+        overflowIconRow.set_selected(currentOverflowIconStyle === 'static' ? 1 : 0);
+
+        overflowIconRow.connect('notify::selected', () => {
+            const selected = overflowIconRow.get_selected();
+            this._settings.set_string('overflow-icon-style', selected === 1 ? 'static' : 'dynamic');
+        });
+        overflowGroup.add(overflowIconRow);
+
         const overflowCountRow = new Adw.SpinRow({
             title: 'Inline icon limit',
             subtitle: 'How many icons stay in the panel before the rest overflow',
@@ -1613,6 +1632,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         });
         overflowEnabledRow.connect('notify::active', () => {
             overflowCountRow.set_sensitive(overflowEnabledRow.get_active());
+            overflowIconRow.set_sensitive(overflowEnabledRow.get_active());
         });
         overflowGroup.add(overflowCountRow);
 

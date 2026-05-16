@@ -175,7 +175,7 @@ new TrayItem(
 | `_setIcon(iconName)` | Set icon by theme name |
 | `_setIconFromPixmap(pixmapData)` | Set icon from ARGB pixel data |
 | `_replaceIcon(iconNameOrPath)` | Destroy and recreate St.Icon widget (used for overrides) |
-| `_applySymbolicStyle()` | Apply Clutter effects for symbolic mode |
+| `_applySymbolicStyle(targetIcon, iconSize)` | Apply Clutter effects for symbolic mode |
 | `_clearIconExcept(activeSource)` | Clear inactive icon sources (content/gicon/icon_name) |
 | `_loadMenu()` | Fetch menu via DBusMenu and display |
 | `_activateMenuItem(itemId)` | Send click event to menu item |
@@ -299,8 +299,10 @@ and the number of active `TrayItem`s exceeds `overflow-inline-count`.
 
 #### Responsibilities
 
-- Renders one of two bundled glyphs (`icons/status-tray.svg` or
-  `icons/status-tray-symbolic.svg`) depending on the current `icon-mode`.
+- Renders either a dynamic preview of up to four overflowed tray icons or one
+  of two bundled glyphs (`icons/status-tray.svg` or
+  `icons/status-tray-symbolic.svg`) depending on `overflow-icon-style` and
+  the current `icon-mode`.
 - Builds one `PopupMenu.PopupSubMenuMenuItem` per overflowed `TrayItem`,
   labelled with the app's display name and prefixed with a clone of that
   `TrayItem`'s gicon.
@@ -450,7 +452,7 @@ match the panel theme via `-st-icon-style: symbolic`. Tint is still applied
 if configured.
 
 ```javascript
-_applySymbolicStyle() {
+_applySymbolicStyle(targetIcon = this._icon, iconSize = 16) {
     const isSymbolicIcon = iconName?.endsWith('-symbolic');
 
     // Symbolic icons: St.Icon handles recolouring via CSS.
@@ -587,6 +589,7 @@ _activateMenuItem(itemId) {
 | `title-aliases` | `a{ss}` | `{}` | Display name → stable app ID (for apps that randomize SNI IDs) |
 | `overflow-enabled` | `b` | `false` | Enable the panel overflow button |
 | `overflow-inline-count` | `i` | `3` | Inline icon limit before items spill into the overflow menu; `0` keeps every tray item in overflow |
+| `overflow-icon-style` | `s` | `'dynamic'` | `'dynamic'` previews up to four hidden icons; `'static'` uses the bundled tray glyph |
 
 ### Effect Override Format
 
@@ -634,6 +637,7 @@ StatusTrayPreferences (Adw.PreferencesWindow)
     │
     ├── Adw.PreferencesGroup ("Panel Overflow")
     │   ├── Enable overflow icon (Adw.SwitchRow) → overflow-enabled
+    │   ├── Overflow button icon (Adw.ComboRow)  → overflow-icon-style
     │   └── Inline icon limit (Adw.SpinRow)      → overflow-inline-count
     │
     ├── Adw.PreferencesGroup ("Tray Apps")

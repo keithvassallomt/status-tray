@@ -62,5 +62,11 @@
       <description>Number of tray items to show directly in the panel before overflowing into the overflow button's menu. Set to 0 to keep every tray item in the overflow menu. Range: 0-20.</description>
     </key>
 
+    <key name="overflow-icon-style" type="s">
+      <default>'dynamic'</default>
+      <summary>Overflow icon style</summary>
+      <description>How to render the overflow button in the panel. 'dynamic' previews up to four hidden tray icons; 'static' uses the bundled tray glyph.</description>
+    </key>
+
   </schema>
 </schemalist>
