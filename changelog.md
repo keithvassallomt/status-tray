@@ -4,6 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- Inline icon limit can now be set as low as `0`, collapsing every tray item into the overflow menu (Windows-style). Previously the minimum was `1`, which always forced at least one icon to stay inline. Thanks to [@krissedout](https://github.com/krissedout) for the suggestion and patch.
+
 ## [1.9] - 2026-05-13
 
 ### Added

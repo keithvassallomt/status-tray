@@ -2803,7 +2803,7 @@ export default class StatusTrayExtension extends Extension {
             return;
 
         const enabled = this._settings.get_boolean('overflow-enabled');
-        const inlineCount = Math.max(1, this._settings.get_int('overflow-inline-count'));
+        const inlineCount = Math.max(0, this._settings.get_int('overflow-inline-count'));
 
         // Passive items aren't visible to the user; exclude them from slot
         // accounting so they don't push real items into the overflow popup,

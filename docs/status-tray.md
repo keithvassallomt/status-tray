@@ -586,7 +586,7 @@ _activateMenuItem(itemId) {
 | `icon-effect-overrides` | `a{ss}` | `{}` | App ID → JSON effect config |
 | `title-aliases` | `a{ss}` | `{}` | Display name → stable app ID (for apps that randomize SNI IDs) |
 | `overflow-enabled` | `b` | `false` | Enable the panel overflow button |
-| `overflow-inline-count` | `i` | `3` | Inline icon limit before items spill into the overflow menu |
+| `overflow-inline-count` | `i` | `3` | Inline icon limit before items spill into the overflow menu; `0` keeps every tray item in overflow |
 
 ### Effect Override Format
 

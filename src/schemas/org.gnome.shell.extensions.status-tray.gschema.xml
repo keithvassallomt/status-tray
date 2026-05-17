@@ -59,7 +59,7 @@
     <key name="overflow-inline-count" type="i">
       <default>3</default>
       <summary>Inline icon count</summary>
-      <description>Number of tray items to show directly in the panel before overflowing into the overflow button's menu. Range: 1-20.</description>
+      <description>Number of tray items to show directly in the panel before overflowing into the overflow button's menu. Set to 0 to keep every tray item in the overflow menu. Range: 0-20.</description>
     </key>
 
   </schema>

@@ -124,7 +124,8 @@ collapsed app, with each app's full menu available inline as a submenu.
 
 - **Enable overflow icon** - Turn the feature on or off (disabled by default)
 - **Inline icon limit** - Choose how many icons stay directly in the panel
-  (1-20) before the rest overflow
+  (0-20) before the rest overflow. Set it to 0 to keep every tray item in the
+  overflow menu.
 
 The overflow button honours the global Icon Style setting, showing a symbolic
 or a full-colour glyph to match your other tray icons.
