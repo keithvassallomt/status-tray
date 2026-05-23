@@ -4,10 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.10] - 2026.05.23
 
 ### Changed
 - Inline icon limit can now be set as low as `0`, collapsing every tray item into the overflow menu (Windows-style). Previously the minimum was `1`, which always forced at least one icon to stay inline. Thanks to [@krissedout](https://github.com/krissedout) for the suggestion and patch.
+- Tray popup menus are now centered under the icon that opened them, matching the behavior of the AppIndicator/KStatusNotifierItem Support extension. Previously the menu aligned with the icon's left edge. Thanks to [@The-Best-Codes](https://github.com/The-Best-Codes) for the report (#14).
 
 ## [1.9] - 2026-05-13
 

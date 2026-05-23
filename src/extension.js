@@ -324,7 +324,7 @@ const TrayItem = GObject.registerClass({
 }, class TrayItem extends PanelMenu.Button {
     _init(busName, objectPath, settings) {
         const itemId = this._extractId(busName, objectPath);
-        super._init(0.0, `StatusTray-${itemId}`);
+        super._init(0.5, `StatusTray-${itemId}`);
 
         this._busName = busName;
         this._objectPath = objectPath;
@@ -1792,7 +1792,7 @@ const TrayItem = GObject.registerClass({
 const OverflowButton = GObject.registerClass(
 class OverflowButton extends PanelMenu.Button {
     _init(extensionPath, settings) {
-        super._init(0.0, 'StatusTray-Overflow');
+        super._init(0.5, 'StatusTray-Overflow');
 
         this._extensionPath = extensionPath;
         this._settings = settings;
