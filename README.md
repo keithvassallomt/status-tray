@@ -123,12 +123,14 @@ button at the right of the tray. Click it to get a menu that lists each
 collapsed app, with each app's full menu available inline as a submenu.
 
 - **Enable overflow icon** - Turn the feature on or off (disabled by default)
+- **Overflow button icon** - Show a dynamic preview of up to 4 hidden icons or
+  keep the static tray glyph
 - **Inline icon limit** - Choose how many icons stay directly in the panel
   (0-20) before the rest overflow. Set it to 0 to keep every tray item in the
   overflow menu.
 
-The overflow button honours the global Icon Style setting, showing a symbolic
-or a full-colour glyph to match your other tray icons.
+The overflow button honours the global Icon Style setting for both the static
+glyph and dynamic previews.
 
 ### Icon Effects
 

@@ -19,3 +19,12 @@
     icon-size: 16px;
     -st-icon-style: symbolic;
 }
+
+.status-tray-overflow-preview {
+    width: 18px;
+    height: 18px;
+}
+
+.status-tray-overflow-preview-icon {
+    icon-size: 11px;
+}

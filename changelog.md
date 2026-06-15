@@ -4,6 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- Overflow button icons can now use a dynamic preview that shows up to four hidden tray icons. Preferences include a Static option for users who prefer the bundled tray glyph.
+
 ## [1.10] - 2026.05.23
 
 ### Changed
