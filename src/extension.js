@@ -34,6 +34,11 @@ const OVERFLOW_PREVIEW_SIZE = 18;
 const OVERFLOW_PREVIEW_SOLO_ICON_SIZE = 16;
 const OVERFLOW_PREVIEW_GRID_ICON_SIZE = 11;
 const OVERFLOW_PREVIEW_STACK_ICON_SIZE = 13;
+// Monochrome preview halo: the background-coloured outline drawn behind each
+// glyph so overlapping silhouettes separate. The halo actor is this many px
+// larger than its glyph, inset by half that to stay centred.
+const OVERFLOW_PREVIEW_HALO_MARGIN = 4;
+const OVERFLOW_PREVIEW_HALO_INSET = 2;
 
 function debug(msg) {
     if (DEBUG) {
@@ -1185,7 +1190,7 @@ const TrayItem = GObject.registerClass({
         this._applySymbolicStyle();
     }
 
-    _applySymbolicStyle(targetIcon = this._icon, iconSize = 16) {
+    _applySymbolicStyle(targetIcon = this._icon, iconSize = 16, forceMode = null) {
         const iconName = this._icon.icon_name;
         const isSymbolicIcon = iconName && iconName.endsWith('-symbolic');
         // Only force regular style when we loaded a file via gicon — this
@@ -1202,7 +1207,9 @@ const TrayItem = GObject.registerClass({
             iconStyleCss = '';
 
         const isPanelIcon = targetIcon === this._icon;
-        const iconMode = this._settings?.get_string('icon-mode') ?? 'symbolic';
+        // forceMode lets the overflow preview pick 'symbolic'/'original'
+        // explicitly; everything else inherits the global icon-mode.
+        const iconMode = forceMode ?? this._settings?.get_string('icon-mode') ?? 'symbolic';
         if (iconMode !== 'symbolic') {
             targetIcon.clear_effects();
             targetIcon.set_style(`icon-size: ${iconSize}px;${iconStyleCss}`);
@@ -1821,8 +1828,9 @@ class OverflowButton extends PanelMenu.Button {
             this._iconUpdateSourceId = 0;
         }
 
-        if (this._getOverflowIconStyle() === 'dynamic' && this._overflowedItems.length > 0) {
-            this._setIconActor(this._buildDynamicIcon());
+        const style = this._getOverflowIconStyle();
+        if (style !== 'static' && this._overflowedItems.length > 0) {
+            this._setIconActor(this._buildDynamicIcon(style));
             return;
         }
 
@@ -1846,8 +1854,18 @@ class OverflowButton extends PanelMenu.Button {
     }
 
     _getOverflowIconStyle() {
-        const style = this._settings?.get_string('overflow-icon-style') ?? 'dynamic';
-        return style === 'static' ? 'static' : 'dynamic';
+        // Default to 'static' (the safe, always-legible option) when settings
+        // are unavailable.
+        const style = this._settings?.get_string('overflow-icon-style') ?? 'static';
+        if (style === 'static' || style === 'dynamic-original' || style === 'dynamic-symbolic')
+            return style;
+        // Legacy 'dynamic' followed the global icon-mode; preserve that mapping
+        // so users who explicitly chose it keep the same appearance.
+        if (style === 'dynamic') {
+            const iconMode = this._settings?.get_string('icon-mode') ?? 'symbolic';
+            return iconMode === 'symbolic' ? 'dynamic-symbolic' : 'dynamic-original';
+        }
+        return 'static';
     }
 
     _buildStaticIcon() {
@@ -1864,7 +1882,16 @@ class OverflowButton extends PanelMenu.Button {
         });
     }
 
-    _buildDynamicIcon() {
+    // Contrasting colour for the monochrome-preview halo. In dark mode the
+    // glyphs are light, so the halo is dark (≈ panel background) and vice
+    // versa. Tracks light/dark without fragile theme-node reads.
+    _haloColor() {
+        return isDarkMode()
+            ? 'rgba(46, 52, 54, 0.95)'
+            : 'rgba(245, 245, 245, 0.95)';
+    }
+
+    _buildDynamicIcon(style) {
         const preview = new St.Widget({
             style_class: 'system-status-icon status-tray-overflow-preview',
             x_align: Clutter.ActorAlign.CENTER,
@@ -1877,15 +1904,42 @@ class OverflowButton extends PanelMenu.Button {
 
         const items = this._overflowedItems.slice(0, OVERFLOW_PREVIEW_LIMIT);
         const positions = this._getPreviewPositions(items.length);
+        const forceMode = style === 'dynamic-symbolic' ? 'symbolic' : 'original';
+        // Derive from forceMode so the halo and the colour treatment can't
+        // diverge if another style value is added later.
+        const withHalo = forceMode === 'symbolic';
 
         for (let i = 0; i < items.length; i++) {
             const { x, y, size } = positions[i];
+
+            // Halo first (drawn behind), then glyph — done per icon so each
+            // icon's halo carves a gap into the icon beneath it. Only icons
+            // recolourable via `color` (symbolic/named) get a halo; pixmap
+            // icons aren't flatly recolourable and are already desaturated in
+            // monochrome mode, so the merge is milder for them.
+            const src = items[i]._icon;
+            const recolourable = !!(src && (src.get_gicon() || src.icon_name));
+            if (withHalo && recolourable) {
+                const haloSize = size + OVERFLOW_PREVIEW_HALO_MARGIN;
+                const halo = new St.Icon({
+                    style_class: 'status-tray-overflow-preview-icon',
+                });
+                halo.set_position(x - OVERFLOW_PREVIEW_HALO_INSET, y - OVERFLOW_PREVIEW_HALO_INSET);
+                halo.set_size(haloSize, haloSize);
+                this._applyTrayItemIcon(halo, items[i], haloSize, 'symbolic');
+                // Flatten to a solid silhouette in the halo colour: drop the
+                // effects/recolour _applyTrayItemIcon added and force `color`.
+                halo.clear_effects();
+                halo.set_style(`icon-size: ${haloSize}px; -st-icon-style: symbolic; color: ${this._haloColor()};`);
+                preview.add_child(halo);
+            }
+
             const icon = new St.Icon({
                 style_class: 'status-tray-overflow-preview-icon',
             });
             icon.set_position(x, y);
             icon.set_size(size, size);
-            this._applyTrayItemIcon(icon, items[i], size);
+            this._applyTrayItemIcon(icon, items[i], size, forceMode);
             preview.add_child(icon);
         }
 
@@ -1977,7 +2031,7 @@ class OverflowButton extends PanelMenu.Button {
         this._applyTrayItemIcon(subItem.icon, trayItem);
     }
 
-    _applyTrayItemIcon(targetIcon, trayItem, iconSize = 16) {
+    _applyTrayItemIcon(targetIcon, trayItem, iconSize = 16, forceMode = null) {
         const src = trayItem._icon;
         if (!src)
             return;
@@ -2025,7 +2079,7 @@ class OverflowButton extends PanelMenu.Button {
         // row so the overflow popup matches the per-app tuning. Delegates to
         // the same routine the panel uses; the trayItem reads its own _icon's
         // properties to decide style/effects.
-        trayItem._applySymbolicStyle(targetIcon, iconSize);
+        trayItem._applySymbolicStyle(targetIcon, iconSize, forceMode);
     }
 
     _refreshRow(trayItem) {
