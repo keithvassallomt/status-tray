@@ -64,12 +64,13 @@
 
     <key name="overflow-icon-style" type="s">
       <choices>
-        <choice value="dynamic"/>
         <choice value="static"/>
+        <choice value="dynamic-original"/>
+        <choice value="dynamic-symbolic"/>
       </choices>
-      <default>'dynamic'</default>
+      <default>'static'</default>
       <summary>Overflow icon style</summary>
-      <description>How to render the overflow button in the panel. 'dynamic' previews up to four hidden tray icons; 'static' uses the bundled tray glyph.</description>
+      <description>How to render the overflow button in the panel. 'static' uses the bundled tray glyph; 'dynamic-original' previews up to four hidden tray icons in their original colours; 'dynamic-symbolic' previews them recoloured to monochrome with a separating outline.</description>
     </key>
 
   </schema>
