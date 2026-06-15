@@ -1,3 +1,6 @@
 dev/
 src/schemas/gschemas.compiled
 .shexli-venv/
+
+# Brainstorming visual-companion mockups
+.superpowers/
