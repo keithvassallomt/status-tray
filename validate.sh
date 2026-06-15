@@ -42,6 +42,12 @@ fi
 . "$VENV_DIR/bin/activate"
 pip install -q -U shexli
 
+# install.sh compiles schemas in place, leaving src/schemas/gschemas.compiled
+# behind. It's a build artifact (gitignored, excluded from the EGO zip), but
+# shexli scans src/ directly and flags it as an unnecessary shipped file
+# (EGO-P-006). Remove it so validation reflects the source, not local builds.
+rm -f "$SRC_DIR/schemas/gschemas.compiled"
+
 echo "Running shexli static analysis on $SRC_DIR..."
 shexli "$SRC_DIR"
 
