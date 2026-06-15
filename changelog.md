@@ -4,12 +4,13 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.11] - 2026-06-15
 
 ### Added
-- Overflow button icon now offers three modes: Static icon (default), Dynamic preview (colour), and Dynamic preview (monochrome). The dynamic previews show up to four hidden tray icons and set their own colour treatment independently of the global Icon Style; the monochrome preview adds a separating outline so overlapping icons stay legible. Thanks to [@krissedout](https://github.com/krissedout) for the original dynamic preview feature.
+- Overflow button can show a live preview of hidden tray icons in place of the bundled glyph. Thanks to [@krissedout](https://github.com/krissedout) for the dynamic preview feature.
+- Overflow button icon now offers three modes — Static icon (default), Dynamic preview (colour), and Dynamic preview (monochrome). The dynamic previews show up to four hidden tray icons and set their colour treatment independently of the global Icon Style, and the monochrome preview adds a separating outline so overlapping icons stay legible.
 
-## [1.10] - 2026.05.23
+## [1.10] - 2026-05-23
 
 ### Changed
 - Inline icon limit can now be set as low as `0`, collapsing every tray item into the overflow menu (Windows-style). Previously the minimum was `1`, which always forced at least one icon to stay inline. Thanks to [@krissedout](https://github.com/krissedout) for the suggestion and patch.

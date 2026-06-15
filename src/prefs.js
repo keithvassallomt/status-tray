@@ -1598,7 +1598,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         const overflowIconRow = new Adw.ComboRow({
             title: 'Overflow button icon',
-            subtitle: 'Use the standard tray icon, or preview hidden icons in colour or monochrome',
+            subtitle: 'Standard icon or a live preview',
             sensitive: overflowEnabledRow.get_active(),
         });
         const overflowIconModel = new Gtk.StringList();
@@ -1606,6 +1606,18 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         overflowIconModel.append('Dynamic preview (colour)');
         overflowIconModel.append('Dynamic preview (monochrome)');
         overflowIconRow.set_model(overflowIconModel);
+
+        // Adw.ComboRow's default factory ellipsizes both the selected value and
+        // the popup rows, truncating these longer labels. A plain Gtk.Label
+        // doesn't ellipsize, so the popup sizes to the full text.
+        const overflowIconFactory = new Gtk.SignalListItemFactory();
+        overflowIconFactory.connect('setup', (_factory, item) => {
+            item.set_child(new Gtk.Label({ xalign: 0 }));
+        });
+        overflowIconFactory.connect('bind', (_factory, item) => {
+            item.get_child().set_label(item.get_item().get_string());
+        });
+        overflowIconRow.set_factory(overflowIconFactory);
 
         // ComboRow index ↔ stored value. Index order matches the appended rows.
         const overflowIconValues = ['static', 'dynamic-original', 'dynamic-symbolic'];
