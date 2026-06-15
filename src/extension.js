@@ -31,6 +31,7 @@ const FALLBACK_ICON_NAME = 'image-loading-symbolic';
 const PIXMAPS_FORMAT = Cogl.PixelFormat.ARGB_8888;
 const OVERFLOW_PREVIEW_LIMIT = 4;
 const OVERFLOW_PREVIEW_SIZE = 18;
+const OVERFLOW_PREVIEW_SOLO_ICON_SIZE = 16;
 const OVERFLOW_PREVIEW_GRID_ICON_SIZE = 11;
 const OVERFLOW_PREVIEW_STACK_ICON_SIZE = 13;
 
@@ -1802,6 +1803,7 @@ class OverflowButton extends PanelMenu.Button {
         this._settings = settings;
         this._overflowedItems = [];
         this._iconActor = null;
+        this._iconUpdateSourceId = 0;
 
         this.add_style_class_name('status-tray-button');
         this.add_style_class_name('status-tray-overflow-button');
@@ -1814,12 +1816,33 @@ class OverflowButton extends PanelMenu.Button {
     }
 
     updateOverflowIcon() {
+        if (this._iconUpdateSourceId) {
+            GLib.source_remove(this._iconUpdateSourceId);
+            this._iconUpdateSourceId = 0;
+        }
+
         if (this._getOverflowIconStyle() === 'dynamic' && this._overflowedItems.length > 0) {
             this._setIconActor(this._buildDynamicIcon());
             return;
         }
 
         this._setIconActor(this._buildStaticIcon());
+    }
+
+    // Idle-coalesce repeated rebuilds. A single setting change (e.g.
+    // icon-mode) can fire 'display-changed' on every overflowed TrayItem in
+    // quick succession; without coalescing each one would destroy and
+    // recreate the preview widget. The idle callback runs once after the
+    // current event burst settles.
+    _scheduleIconUpdate() {
+        if (this._iconUpdateSourceId)
+            return;
+
+        this._iconUpdateSourceId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._iconUpdateSourceId = 0;
+            this.updateOverflowIcon();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _getOverflowIconStyle() {
@@ -1871,11 +1894,11 @@ class OverflowButton extends PanelMenu.Button {
 
     _getPreviewPositions(count) {
         if (count === 1)
-            return [{ x: 1, y: 1, size: 16 }];
+            return [{ x: 1, y: 1, size: OVERFLOW_PREVIEW_SOLO_ICON_SIZE }];
         if (count === 2)
             return [
                 { x: 0, y: 2, size: OVERFLOW_PREVIEW_STACK_ICON_SIZE },
-                { x: 6, y: 2, size: OVERFLOW_PREVIEW_STACK_ICON_SIZE },
+                { x: 5, y: 2, size: OVERFLOW_PREVIEW_STACK_ICON_SIZE },
             ];
         if (count === 3)
             return [
@@ -1957,7 +1980,7 @@ class OverflowButton extends PanelMenu.Button {
     _applyTrayItemIcon(targetIcon, trayItem, iconSize = 16) {
         const src = trayItem._icon;
         if (!src)
-            return false;
+            return;
 
         // Reset every potential source so switching between branches (e.g.
         // pixmap → named icon on refresh) doesn't leave stale state behind.
@@ -1995,7 +2018,7 @@ class OverflowButton extends PanelMenu.Button {
         if (!sourceApplied) {
             targetIcon.set_icon_name(FALLBACK_ICON_NAME);
             targetIcon.set_style(`icon-size: ${iconSize}px;`);
-            return false;
+            return;
         }
 
         // Mirror the panel icon's symbolic/recolour/effect treatment onto the
@@ -2003,7 +2026,6 @@ class OverflowButton extends PanelMenu.Button {
         // the same routine the panel uses; the trayItem reads its own _icon's
         // properties to decide style/effects.
         trayItem._applySymbolicStyle?.(targetIcon, iconSize);
-        return true;
     }
 
     _refreshRow(trayItem) {
@@ -2013,7 +2035,7 @@ class OverflowButton extends PanelMenu.Button {
         const label = trayItem._computeDisplayName?.() || trayItem._appId || 'Unknown';
         subItem.label.text = label;
         this._applyRowIcon(subItem, trayItem);
-        this.updateOverflowIcon();
+        this._scheduleIconUpdate();
         // Force the submenu to refetch on next open so menu contents stay
         // in sync if the app's menu tree changed. Re-seed the placeholder
         // so the submenu is still openable (see note in setOverflowedItems).
@@ -2022,6 +2044,10 @@ class OverflowButton extends PanelMenu.Button {
     }
 
     destroy() {
+        if (this._iconUpdateSourceId) {
+            GLib.source_remove(this._iconUpdateSourceId);
+            this._iconUpdateSourceId = 0;
+        }
         for (const trayItem of this._rows.keys())
             trayItem.disconnectObject(this);
         this._rows.clear();
