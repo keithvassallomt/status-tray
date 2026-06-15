@@ -1936,7 +1936,7 @@ class OverflowButton extends PanelMenu.Button {
         this._rows.clear();
 
         for (const trayItem of trayItems) {
-            const label = trayItem._computeDisplayName?.() || trayItem._appId || 'Unknown';
+            const label = trayItem._computeDisplayName() || trayItem._appId || 'Unknown';
             const subItem = new PopupMenu.PopupSubMenuMenuItem(label, true);
             this._applyRowIcon(subItem, trayItem);
 
@@ -1990,7 +1990,7 @@ class OverflowButton extends PanelMenu.Button {
         targetIcon.set_size(-1, -1);
 
         let sourceApplied = false;
-        const gicon = src.get_gicon?.();
+        const gicon = src.get_gicon();
         if (gicon) {
             targetIcon.set_gicon(gicon);
             sourceApplied = true;
@@ -2025,14 +2025,14 @@ class OverflowButton extends PanelMenu.Button {
         // row so the overflow popup matches the per-app tuning. Delegates to
         // the same routine the panel uses; the trayItem reads its own _icon's
         // properties to decide style/effects.
-        trayItem._applySymbolicStyle?.(targetIcon, iconSize);
+        trayItem._applySymbolicStyle(targetIcon, iconSize);
     }
 
     _refreshRow(trayItem) {
         const subItem = this._rows.get(trayItem);
         if (!subItem)
             return;
-        const label = trayItem._computeDisplayName?.() || trayItem._appId || 'Unknown';
+        const label = trayItem._computeDisplayName() || trayItem._appId || 'Unknown';
         subItem.label.text = label;
         this._applyRowIcon(subItem, trayItem);
         this._scheduleIconUpdate();
