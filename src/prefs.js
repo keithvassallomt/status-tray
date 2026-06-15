@@ -1598,20 +1598,30 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         const overflowIconRow = new Adw.ComboRow({
             title: 'Overflow button icon',
-            subtitle: 'Preview hidden icons or use the standard tray icon',
+            subtitle: 'Use the standard tray icon, or preview hidden icons in colour or monochrome',
             sensitive: overflowEnabledRow.get_active(),
         });
         const overflowIconModel = new Gtk.StringList();
-        overflowIconModel.append('Dynamic preview');
         overflowIconModel.append('Static icon');
+        overflowIconModel.append('Dynamic preview (colour)');
+        overflowIconModel.append('Dynamic preview (monochrome)');
         overflowIconRow.set_model(overflowIconModel);
 
+        // ComboRow index ↔ stored value. Index order matches the appended rows.
+        const overflowIconValues = ['static', 'dynamic-original', 'dynamic-symbolic'];
         const currentOverflowIconStyle = this._settings.get_string('overflow-icon-style');
-        overflowIconRow.set_selected(currentOverflowIconStyle === 'static' ? 1 : 0);
+        let currentIndex = overflowIconValues.indexOf(currentOverflowIconStyle);
+        if (currentIndex < 0) {
+            // Legacy 'dynamic' followed icon-mode; anything else falls back to Static.
+            currentIndex = currentOverflowIconStyle === 'dynamic'
+                ? (this._settings.get_string('icon-mode') === 'symbolic' ? 2 : 1)
+                : 0;
+        }
+        overflowIconRow.set_selected(currentIndex);
 
         overflowIconRow.connect('notify::selected', () => {
             const selected = overflowIconRow.get_selected();
-            this._settings.set_string('overflow-icon-style', selected === 1 ? 'static' : 'dynamic');
+            this._settings.set_string('overflow-icon-style', overflowIconValues[selected] ?? 'static');
         });
         overflowGroup.add(overflowIconRow);
 
