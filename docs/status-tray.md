@@ -175,7 +175,7 @@ new TrayItem(
 | `_setIcon(iconName)` | Set icon by theme name |
 | `_setIconFromPixmap(pixmapData)` | Set icon from ARGB pixel data |
 | `_replaceIcon(iconNameOrPath)` | Destroy and recreate St.Icon widget (used for overrides) |
-| `_applySymbolicStyle(targetIcon, iconSize)` | Apply Clutter effects for symbolic mode |
+| `_applySymbolicStyle(targetIcon, iconSize, forceMode)` | Apply Clutter effects for symbolic mode; `forceMode` overrides the global `icon-mode` (used by the overflow preview) |
 | `_clearIconExcept(activeSource)` | Clear inactive icon sources (content/gicon/icon_name) |
 | `_loadMenu()` | Fetch menu via DBusMenu and display |
 | `_activateMenuItem(itemId)` | Send click event to menu item |
@@ -299,10 +299,12 @@ and the number of active `TrayItem`s exceeds `overflow-inline-count`.
 
 #### Responsibilities
 
-- Renders either a dynamic preview of up to four overflowed tray icons or one
-  of two bundled glyphs (`icons/status-tray.svg` or
-  `icons/status-tray-symbolic.svg`) depending on `overflow-icon-style` and
-  the current `icon-mode`.
+- Renders one of three ways depending on `overflow-icon-style`: a bundled glyph
+  (`icons/status-tray.svg` / `icons/status-tray-symbolic.svg`, following the
+  current `icon-mode`), a colour preview of up to four overflowed tray icons, or
+  a monochrome preview of them with a panel-background halo behind each glyph so
+  overlapping silhouettes separate. The dynamic previews set their own colour
+  treatment independently of `icon-mode`.
 - Builds one `PopupMenu.PopupSubMenuMenuItem` per overflowed `TrayItem`,
   labelled with the app's display name and prefixed with a clone of that
   `TrayItem`'s gicon.
@@ -589,7 +591,7 @@ _activateMenuItem(itemId) {
 | `title-aliases` | `a{ss}` | `{}` | Display name → stable app ID (for apps that randomize SNI IDs) |
 | `overflow-enabled` | `b` | `false` | Enable the panel overflow button |
 | `overflow-inline-count` | `i` | `3` | Inline icon limit before items spill into the overflow menu; `0` keeps every tray item in overflow |
-| `overflow-icon-style` | `s` | `'dynamic'` | `'dynamic'` previews up to four hidden icons; `'static'` uses the bundled tray glyph |
+| `overflow-icon-style` | `s` | `'static'` | `'static'` uses the bundled tray glyph; `'dynamic-original'` previews up to four hidden icons in colour; `'dynamic-symbolic'` previews them in monochrome with a separating outline |
 
 ### Effect Override Format
 
