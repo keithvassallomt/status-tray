@@ -1209,7 +1209,7 @@ const TrayItem = GObject.registerClass({
         const isPanelIcon = targetIcon === this._icon;
         // forceMode lets the overflow preview pick 'symbolic'/'original'
         // explicitly; everything else inherits the global icon-mode.
-        const iconMode = forceMode ?? this._settings?.get_string('icon-mode') ?? 'symbolic';
+        const iconMode = forceMode ?? this._settings.get_string('icon-mode');
         if (iconMode !== 'symbolic') {
             targetIcon.clear_effects();
             targetIcon.set_style(`icon-size: ${iconSize}px;${iconStyleCss}`);
@@ -1854,15 +1854,13 @@ class OverflowButton extends PanelMenu.Button {
     }
 
     _getOverflowIconStyle() {
-        // Default to 'static' (the safe, always-legible option) when settings
-        // are unavailable.
-        const style = this._settings?.get_string('overflow-icon-style') ?? 'static';
+        const style = this._settings.get_string('overflow-icon-style');
         if (style === 'static' || style === 'dynamic-original' || style === 'dynamic-symbolic')
             return style;
         // Legacy 'dynamic' followed the global icon-mode; preserve that mapping
         // so users who explicitly chose it keep the same appearance.
         if (style === 'dynamic') {
-            const iconMode = this._settings?.get_string('icon-mode') ?? 'symbolic';
+            const iconMode = this._settings.get_string('icon-mode');
             return iconMode === 'symbolic' ? 'dynamic-symbolic' : 'dynamic-original';
         }
         return 'static';
