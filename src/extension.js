@@ -1227,7 +1227,7 @@ const TrayItem = GObject.registerClass({
         let tintColor = [1.0, 1.0, 1.0];  // White default
 
         try {
-            const effectOverrides = this._settings?.get_value('icon-effect-overrides')?.deep_unpack() ?? {};
+            const effectOverrides = this._settings.get_value('icon-effect-overrides').deep_unpack();
             const overrideJson = effectOverrides[this._appId];
             if (overrideJson) {
                 const override = JSON.parse(overrideJson);
@@ -1867,7 +1867,7 @@ class OverflowButton extends PanelMenu.Button {
     }
 
     _buildStaticIcon() {
-        const mode = this._settings?.get_string('icon-mode') ?? 'symbolic';
+        const mode = this._settings.get_string('icon-mode');
         const fileName = mode === 'symbolic'
             ? 'status-tray-symbolic.svg'
             : 'status-tray.svg';
