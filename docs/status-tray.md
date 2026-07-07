@@ -644,7 +644,7 @@ StatusTrayPreferences (Adw.PreferencesWindow)
 └── Adw.PreferencesPage ("General")
     ├── Adw.PreferencesGroup ("Appearance")
     │   ├── Icon Style (Adw.ComboRow) → icon-mode
-    │   └── Icon Size (Adw.ComboRow) → icon-size
+    │   └── Icon Size (Adw.ActionRow + Gtk.Scale) → icon-size
     │
     ├── Adw.PreferencesGroup ("Panel Overflow")
     │   ├── Enable overflow icon (Adw.SwitchRow) → overflow-enabled

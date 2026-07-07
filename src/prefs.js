@@ -1580,23 +1580,54 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         appearanceGroup.add(iconModeRow);
 
-        const iconSizeRow = new Adw.ComboRow({
+        const iconSizeRow = new Adw.ActionRow({
             title: 'Icon Size',
             subtitle: 'The size of icons in the top bar',
         });
 
-        const iconSizeModel = new Gtk.StringList();
-        for (const label of ['Smallest', 'Smaller', 'Standard', 'Slightly larger', 'Larger', 'Big', 'Enormous'])
-            iconSizeModel.append(label);
-        iconSizeRow.set_model(iconSizeModel);
+        // Slider position maps to px directly; label maps px - 14 (schema
+        // range guarantees 14-20).
+        const iconSizeLabels = ['Smallest', 'Smaller', 'Standard', 'Slightly larger', 'Larger', 'Big', 'Enormous'];
 
-        // Stored px maps to index as px - 14 (schema range guarantees 14-20).
-        iconSizeRow.set_selected(this._settings.get_int('icon-size') - 14);
-
-        iconSizeRow.connect('notify::selected', () => {
-            this._settings.set_int('icon-size', 14 + iconSizeRow.get_selected());
+        const iconSizeBox = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 8,
+            valign: Gtk.Align.CENTER,
         });
 
+        const iconSizeScale = new Gtk.Scale({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            adjustment: new Gtk.Adjustment({
+                lower: 14,
+                upper: 20,
+                step_increment: 1,
+                page_increment: 1,
+                value: this._settings.get_int('icon-size'),
+            }),
+            draw_value: false,
+            round_digits: 0,
+            hexpand: true,
+            width_request: 160,
+        });
+        // Anchor the default at 16, which isn't the range midpoint (17).
+        iconSizeScale.add_mark(16, Gtk.PositionType.BOTTOM, 'Default');
+
+        const iconSizeValue = new Gtk.Label({
+            label: iconSizeLabels[this._settings.get_int('icon-size') - 14],
+            width_chars: 15,
+            xalign: 0,
+        });
+
+        iconSizeScale.connect('value-changed', () => {
+            const px = Math.round(iconSizeScale.get_value());
+            iconSizeValue.set_label(iconSizeLabels[px - 14]);
+            if (this._settings.get_int('icon-size') !== px)
+                this._settings.set_int('icon-size', px);
+        });
+
+        iconSizeBox.append(iconSizeScale);
+        iconSizeBox.append(iconSizeValue);
+        iconSizeRow.add_suffix(iconSizeBox);
         appearanceGroup.add(iconSizeRow);
 
         const overflowGroup = new Adw.PreferencesGroup({
