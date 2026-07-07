@@ -6,7 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-
+### Added
+- Icon Size setting under Appearance: choose from seven sizes (14–20px, default 16px). Main tray icons and the overflow button preview resize live to match.
 
 ## [1.11] - 2026-06-15
 

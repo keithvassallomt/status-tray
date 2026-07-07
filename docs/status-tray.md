@@ -269,6 +269,7 @@ Main extension controller. Extends `Extension.Extension`.
 // Setting change handlers
 'changed::disabled-apps'           → _refreshItems()
 'changed::icon-mode'               → _refreshIconStyles()
+'changed::icon-size'               → _refreshIconSizes()
 'changed::icon-overrides'          → _refreshIcons()  // only updates affected items
 'changed::icon-effect-overrides'   → _refreshIconStyles()
 'changed::icon-fallback-overrides' → _refreshIcons()
@@ -282,6 +283,12 @@ Main extension controller. Extends `Extension.Extension`.
 active override or were previously showing one (override just removed). This
 prevents stale `IconThemePath` lookups from corrupting unrelated icons,
 especially for Electron/Flatpak apps with temporary directories.
+
+**Note**: `_refreshIconSizes()` resizes each `TrayItem`'s panel icon (via
+`_applyIconSize()`) and, through the trailing `_applyOverflow()` call, the
+overflow button's dynamic preview mosaic, so both track `icon-size` live.
+Submenu icons inside the overflow dropdown are unaffected — `_applyRowIcon()`
+always renders them at the fixed default of 16px.
 
 Every lifecycle path that changes the set of inline items
 (`_onItemRegistered`, `_onItemUnregistered`, `_refreshItems`, `_refreshIcons`,
@@ -583,6 +590,7 @@ _activateMenuItem(itemId) {
 |-----|------|---------|-------------|
 | `disabled-apps` | `as` | `[]` | App IDs to hide |
 | `icon-mode` | `s` | `'symbolic'` | `'symbolic'` or `'original'` |
+| `icon-size` | `i` | `16` | Size in pixels of tray icons shown in the top bar and the overflow button's dynamic preview; range 14-20 |
 | `app-order` | `as` | `[]` | Custom app ordering |
 | `icon-overrides` | `a{ss}` | `{}` | App ID → icon name/path |
 | `icon-fallback-overrides` | `as` | `[]` | App IDs where override is fallback-only |
@@ -635,7 +643,8 @@ settings.connect('changed::icon-mode', () => {
 StatusTrayPreferences (Adw.PreferencesWindow)
 └── Adw.PreferencesPage ("General")
     ├── Adw.PreferencesGroup ("Appearance")
-    │   └── Icon Style (Adw.ComboRow) → icon-mode
+    │   ├── Icon Style (Adw.ComboRow) → icon-mode
+    │   └── Icon Size (Adw.ComboRow) → icon-size
     │
     ├── Adw.PreferencesGroup ("Panel Overflow")
     │   ├── Enable overflow icon (Adw.SwitchRow) → overflow-enabled
