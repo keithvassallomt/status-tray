@@ -1580,6 +1580,25 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         appearanceGroup.add(iconModeRow);
 
+        const iconSizeRow = new Adw.ComboRow({
+            title: 'Icon Size',
+            subtitle: 'The size of icons in the top bar',
+        });
+
+        const iconSizeModel = new Gtk.StringList();
+        for (const label of ['Smallest', 'Smaller', 'Standard', 'Slightly larger', 'Larger', 'Big', 'Enormous'])
+            iconSizeModel.append(label);
+        iconSizeRow.set_model(iconSizeModel);
+
+        // Stored px maps to index as px - 14 (schema range guarantees 14-20).
+        iconSizeRow.set_selected(this._settings.get_int('icon-size') - 14);
+
+        iconSizeRow.connect('notify::selected', () => {
+            this._settings.set_int('icon-size', 14 + iconSizeRow.get_selected());
+        });
+
+        appearanceGroup.add(iconSizeRow);
+
         const overflowGroup = new Adw.PreferencesGroup({
             title: 'Panel Overflow',
             description: 'Collapse extra tray icons into an overflow menu at the right of the tray',
