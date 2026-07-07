@@ -1190,7 +1190,7 @@ const TrayItem = GObject.registerClass({
         this._applySymbolicStyle();
     }
 
-    _applySymbolicStyle(targetIcon = this._icon, iconSize = 16, forceMode = null) {
+    _applySymbolicStyle(targetIcon = this._icon, iconSize = this._settings.get_int('icon-size'), forceMode = null) {
         const iconName = this._icon.icon_name;
         const isSymbolicIcon = iconName && iconName.endsWith('-symbolic');
         // Only force regular style when we loaded a file via gicon — this
@@ -1371,7 +1371,7 @@ const TrayItem = GObject.registerClass({
                 }
 
                 const scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-                const scaledSize = 16 * scaleFactor;
+                const scaledSize = this._settings.get_int('icon-size') * scaleFactor;
 
                 this._icon.set({
                     content: imageContent,
