@@ -1585,10 +1585,6 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             subtitle: 'The size of icons in the top bar',
         });
 
-        // Slider position maps to px directly; label maps px - 14 (schema
-        // range guarantees 14-20).
-        const iconSizeLabels = ['Smallest', 'Smaller', 'Standard', 'Slightly larger', 'Larger', 'Big', 'Enormous'];
-
         const iconSizeBox = new Gtk.Box({
             orientation: Gtk.Orientation.HORIZONTAL,
             spacing: 8,
@@ -1613,14 +1609,14 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         iconSizeScale.add_mark(16, Gtk.PositionType.BOTTOM, 'Default');
 
         const iconSizeValue = new Gtk.Label({
-            label: iconSizeLabels[this._settings.get_int('icon-size') - 14],
-            width_chars: 15,
+            label: `${this._settings.get_int('icon-size')} px`,
+            width_chars: 5,
             xalign: 0,
         });
 
         iconSizeScale.connect('value-changed', () => {
             const px = Math.round(iconSizeScale.get_value());
-            iconSizeValue.set_label(iconSizeLabels[px - 14]);
+            iconSizeValue.set_label(`${px} px`);
             if (this._settings.get_int('icon-size') !== px)
                 this._settings.set_int('icon-size', px);
         });
