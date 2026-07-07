@@ -1890,15 +1890,19 @@ class OverflowButton extends PanelMenu.Button {
     }
 
     _buildDynamicIcon(style) {
+        // Preview mosaic tracks the tray icon size: base geometry is tuned for
+        // 16px, so scale every dimension by the configured size over 16.
+        const scale = this._settings.get_int('icon-size') / 16;
+        const canvas = Math.round(OVERFLOW_PREVIEW_SIZE * scale);
         const preview = new St.Widget({
             style_class: 'system-status-icon status-tray-overflow-preview',
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
-            width: OVERFLOW_PREVIEW_SIZE,
-            height: OVERFLOW_PREVIEW_SIZE,
+            width: canvas,
+            height: canvas,
             layout_manager: new Clutter.FixedLayout(),
         });
-        preview.set_size(OVERFLOW_PREVIEW_SIZE, OVERFLOW_PREVIEW_SIZE);
+        preview.set_size(canvas, canvas);
 
         const items = this._overflowedItems.slice(0, OVERFLOW_PREVIEW_LIMIT);
         const positions = this._getPreviewPositions(items.length);
@@ -1908,7 +1912,10 @@ class OverflowButton extends PanelMenu.Button {
         const withHalo = forceMode === 'symbolic';
 
         for (let i = 0; i < items.length; i++) {
-            const { x, y, size } = positions[i];
+            const base = positions[i];
+            const x = Math.round(base.x * scale);
+            const y = Math.round(base.y * scale);
+            const size = Math.round(base.size * scale);
 
             // Halo first (drawn behind), then glyph — done per icon so each
             // icon's halo carves a gap into the icon beneath it. Only icons
@@ -1918,11 +1925,12 @@ class OverflowButton extends PanelMenu.Button {
             const src = items[i]._icon;
             const recolourable = !!(src && (src.get_gicon() || src.icon_name));
             if (withHalo && recolourable) {
-                const haloSize = size + OVERFLOW_PREVIEW_HALO_MARGIN;
+                const haloSize = size + Math.round(OVERFLOW_PREVIEW_HALO_MARGIN * scale);
+                const inset = Math.round(OVERFLOW_PREVIEW_HALO_INSET * scale);
                 const halo = new St.Icon({
                     style_class: 'status-tray-overflow-preview-icon',
                 });
-                halo.set_position(x - OVERFLOW_PREVIEW_HALO_INSET, y - OVERFLOW_PREVIEW_HALO_INSET);
+                halo.set_position(x - inset, y - inset);
                 halo.set_size(haloSize, haloSize);
                 this._applyTrayItemIcon(halo, items[i], haloSize, 'symbolic');
                 // Flatten to a solid silhouette in the halo colour: drop the
