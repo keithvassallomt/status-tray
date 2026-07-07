@@ -4,6 +4,10 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+
+
 ## [1.11] - 2026-06-15
 
 ### Added
