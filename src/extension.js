@@ -1889,6 +1889,7 @@ class OverflowButton extends PanelMenu.Button {
         );
         return new St.Icon({
             style_class: 'system-status-icon status-tray-icon',
+            style: `icon-size: ${this._settings.get_int('icon-size')}px;`,
             gicon: new Gio.FileIcon({ file }),
         });
     }
