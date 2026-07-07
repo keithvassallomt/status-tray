@@ -1287,6 +1287,19 @@ const TrayItem = GObject.registerClass({
             this.emit('display-changed');
     }
 
+    _applyIconSize() {
+        // Content/pixmap icons size via explicit width/height, which icon-size
+        // CSS won't change; resize the actor directly without re-looking-up the
+        // icon (see _refreshIcons' stale-path note). Themed icons resize via
+        // the icon-size CSS that _applySymbolicStyle sets.
+        if (this._icon.content) {
+            const scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+            const scaledSize = this._settings.get_int('icon-size') * scaleFactor;
+            this._icon.set_size(scaledSize, scaledSize);
+        }
+        this._applySymbolicStyle();
+    }
+
     _setIconFromPixmap(pixmapVariant) {
         try {
             let pixmaps;
@@ -2631,6 +2644,10 @@ export default class StatusTrayExtension extends Extension {
                 debug('icon-mode setting changed');
                 this._refreshIconStyles();
             },
+            'changed::icon-size', () => {
+                debug('icon-size setting changed');
+                this._refreshIconSizes();
+            },
             'changed::icon-overrides', () => {
                 debug('icon-overrides setting changed');
                 this._refreshIcons();
@@ -2839,6 +2856,13 @@ export default class StatusTrayExtension extends Extension {
     _refreshIconStyles() {
         for (const [key, item] of this._items) {
             item._applySymbolicStyle();
+        }
+        this._applyOverflow();
+    }
+
+    _refreshIconSizes() {
+        for (const [, item] of this._items) {
+            item._applyIconSize();
         }
         this._applyOverflow();
     }
