@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Icon Size setting under Appearance: a slider from 14px to 20px (default 16px). Main tray icons and the overflow button resize live to match.
+- Overflow button icon now offers a fourth mode — Custom icon. Selecting it reveals a Custom overflow icon row; click Choose… to pick a theme icon or an image file (PNG/SVG), rendered as-is at the configured icon size. Falls back to the bundled overflow glyph if no icon is chosen or the chosen file is missing.
 
 ## [1.11] - 2026-06-15
 
