@@ -648,10 +648,9 @@ const IconPickerDialog = GObject.registerClass({
         });
         content.append(previewGroup);
 
-        const overrides = settings.get_value('icon-overrides').deep_unpack();
         const currentOverride = simpleKey
             ? (settings.get_string(simpleKey) || null)
-            : (overrides[appId] || null);
+            : (settings.get_value('icon-overrides').deep_unpack()[appId] || null);
 
         this._previewImage = new Gtk.Image({
             pixel_size: 48,
@@ -680,81 +679,81 @@ const IconPickerDialog = GObject.registerClass({
         this._previewRow = previewRow;
 
         if (!simpleKey) {
-        const fallbackApps = settings.get_strv('icon-fallback-overrides');
-        this._fallbackRow = new Adw.SwitchRow({
-            title: 'Use as Fallback Only',
-            subtitle: 'Only apply when the app sends a low-quality icon or no icon',
-        });
-        this._fallbackRow.set_active(fallbackApps.includes(appId));
-        previewGroup.add(this._fallbackRow);
+            const fallbackApps = settings.get_strv('icon-fallback-overrides');
+            this._fallbackRow = new Adw.SwitchRow({
+                title: 'Use as Fallback Only',
+                subtitle: 'Only apply when the app sends a low-quality icon or no icon',
+            });
+            this._fallbackRow.set_active(fallbackApps.includes(appId));
+            previewGroup.add(this._fallbackRow);
 
-        this._fallbackRow.connect('notify::active', () => {
-            const apps = this._settings.get_strv('icon-fallback-overrides');
-            const index = apps.indexOf(this._appId);
-            if (this._fallbackRow.get_active() && index === -1) {
-                apps.push(this._appId);
-            } else if (!this._fallbackRow.get_active() && index > -1) {
-                apps.splice(index, 1);
-            }
-            this._settings.set_strv('icon-fallback-overrides', apps);
+            this._fallbackRow.connect('notify::active', () => {
+                const apps = this._settings.get_strv('icon-fallback-overrides');
+                const index = apps.indexOf(this._appId);
+                if (this._fallbackRow.get_active() && index === -1) {
+                    apps.push(this._appId);
+                } else if (!this._fallbackRow.get_active() && index > -1) {
+                    apps.splice(index, 1);
+                }
+                this._settings.set_strv('icon-fallback-overrides', apps);
 
-            // Lock is incompatible with fallback — disable it when fallback is on
-            if (this._fallbackRow.get_active()) {
-                this._lockRow.set_active(false);
+                // Lock is incompatible with fallback — disable it when fallback is on
+                if (this._fallbackRow.get_active()) {
+                    this._lockRow.set_active(false);
+                    this._lockRow.set_sensitive(false);
+                } else {
+                    this._lockRow.set_sensitive(true);
+                }
+            });
+
+            const lockApps = settings.get_strv('icon-lock-overrides');
+            this._lockRow = new Adw.SwitchRow({
+                title: 'Ignore App Status Icons',
+                subtitle: 'Keep the chosen icon even when the app changes its status icon',
+            });
+            this._lockRow.set_active(lockApps.includes(appId));
+            // Disable lock when fallback is active
+            if (this._fallbackRow.get_active())
                 this._lockRow.set_sensitive(false);
-            } else {
-                this._lockRow.set_sensitive(true);
-            }
-        });
+            previewGroup.add(this._lockRow);
 
-        const lockApps = settings.get_strv('icon-lock-overrides');
-        this._lockRow = new Adw.SwitchRow({
-            title: 'Ignore App Status Icons',
-            subtitle: 'Keep the chosen icon even when the app changes its status icon',
-        });
-        this._lockRow.set_active(lockApps.includes(appId));
-        // Disable lock when fallback is active
-        if (this._fallbackRow.get_active())
-            this._lockRow.set_sensitive(false);
-        previewGroup.add(this._lockRow);
-
-        this._lockRow.connect('notify::active', () => {
-            const apps = this._settings.get_strv('icon-lock-overrides');
-            const index = apps.indexOf(this._appId);
-            if (this._lockRow.get_active() && index === -1) {
-                apps.push(this._appId);
-            } else if (!this._lockRow.get_active() && index > -1) {
-                apps.splice(index, 1);
-            }
-            this._settings.set_strv('icon-lock-overrides', apps);
-        });
-
-        const aliases = settings.get_value('title-aliases').deep_unpack();
-        this._aliasRow = new Adw.SwitchRow({
-            title: 'Match by App Name',
-            subtitle: `Identify this app as "${displayName}" instead of its process ID. Enable for apps that randomize their ID on every launch.`,
-        });
-        this._aliasRow.set_active(aliases[displayName] !== undefined);
-        previewGroup.add(this._aliasRow);
-
-        this._aliasRow.connect('notify::active', () => {
-            const map = this._settings.get_value('title-aliases').deep_unpack();
-            if (this._aliasRow.get_active()) {
-                if (map[this._displayName] === undefined) {
-                    map[this._displayName] = this._displayName;
-                    this._settings.set_value('title-aliases', new GLib.Variant('a{ss}', map));
+            this._lockRow.connect('notify::active', () => {
+                const apps = this._settings.get_strv('icon-lock-overrides');
+                const index = apps.indexOf(this._appId);
+                if (this._lockRow.get_active() && index === -1) {
+                    apps.push(this._appId);
+                } else if (!this._lockRow.get_active() && index > -1) {
+                    apps.splice(index, 1);
                 }
-                if (this._appId !== this._displayName) {
-                    migrateAppIdAcrossSettings(this._settings, this._appId, this._displayName);
-                    this._appId = this._displayName;
+                this._settings.set_strv('icon-lock-overrides', apps);
+            });
+
+            const aliases = settings.get_value('title-aliases').deep_unpack();
+            this._aliasRow = new Adw.SwitchRow({
+                title: 'Match by App Name',
+                subtitle: `Identify this app as "${displayName}" instead of its process ID. Enable for apps that randomize their ID on every launch.`,
+            });
+            this._aliasRow.set_active(aliases[displayName] !== undefined);
+            previewGroup.add(this._aliasRow);
+
+            this._aliasRow.connect('notify::active', () => {
+                const map = this._settings.get_value('title-aliases').deep_unpack();
+                if (this._aliasRow.get_active()) {
+                    if (map[this._displayName] === undefined) {
+                        map[this._displayName] = this._displayName;
+                        this._settings.set_value('title-aliases', new GLib.Variant('a{ss}', map));
+                    }
+                    if (this._appId !== this._displayName) {
+                        migrateAppIdAcrossSettings(this._settings, this._appId, this._displayName);
+                        this._appId = this._displayName;
+                    }
+                } else {
+                    if (map[this._displayName] !== undefined) {
+                        delete map[this._displayName];
+                        this._settings.set_value('title-aliases', new GLib.Variant('a{ss}', map));
+                    }
                 }
-            } else {
-                if (map[this._displayName] !== undefined) {
-                    delete map[this._displayName];
-                    this._settings.set_value('title-aliases', new GLib.Variant('a{ss}', map));
-                }
-            }
-        });
+            });
         }
 
         const filterBox = new Gtk.Box({
@@ -1681,7 +1680,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         const overflowIconRow = new Adw.ComboRow({
             title: 'Overflow button icon',
-            subtitle: 'Standard icon or a live preview',
+            subtitle: 'Standard icon, a live preview, or your own custom icon',
             sensitive: overflowEnabledRow.get_active(),
         });
         const overflowIconModel = new Gtk.StringList();
