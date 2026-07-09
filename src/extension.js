@@ -1842,6 +1842,10 @@ class OverflowButton extends PanelMenu.Button {
         }
 
         const style = this._getOverflowIconStyle();
+        if (style === 'custom') {
+            this._setIconActor(this._buildCustomIcon());
+            return;
+        }
         if (style !== 'static' && this._overflowedItems.length > 0) {
             this._setIconActor(this._buildDynamicIcon(style));
             return;
@@ -1868,7 +1872,8 @@ class OverflowButton extends PanelMenu.Button {
 
     _getOverflowIconStyle() {
         const style = this._settings.get_string('overflow-icon-style');
-        if (style === 'static' || style === 'dynamic-original' || style === 'dynamic-symbolic')
+        if (style === 'static' || style === 'dynamic-original' ||
+            style === 'dynamic-symbolic' || style === 'custom')
             return style;
         // Legacy 'dynamic' followed the global icon-mode; preserve that mapping
         // so users who explicitly chose it keep the same appearance.
@@ -1891,6 +1896,31 @@ class OverflowButton extends PanelMenu.Button {
             style_class: 'system-status-icon status-tray-icon',
             style: `icon-size: ${this._settings.get_int('icon-size')}px;`,
             gicon: new Gio.FileIcon({ file }),
+        });
+    }
+
+    _buildCustomIcon() {
+        const value = this._settings.get_string('overflow-custom-icon');
+        if (!value)
+            return this._buildStaticIcon();
+
+        const sizeStyle = `icon-size: ${this._settings.get_int('icon-size')}px;`;
+        if (value.startsWith('/')) {
+            const file = Gio.File.new_for_path(value);
+            if (!file.query_exists(null)) {
+                debug(`Custom overflow icon path missing: ${value}`);
+                return this._buildStaticIcon();
+            }
+            return new St.Icon({
+                style_class: 'system-status-icon status-tray-icon',
+                style: sizeStyle,
+                gicon: new Gio.FileIcon({ file }),
+            });
+        }
+        return new St.Icon({
+            style_class: 'system-status-icon status-tray-icon',
+            style: sizeStyle,
+            icon_name: value,
         });
     }
 
@@ -2683,6 +2713,10 @@ export default class StatusTrayExtension extends Extension {
             },
             'changed::overflow-icon-style', () => {
                 debug('overflow-icon-style setting changed');
+                this._applyOverflow();
+            },
+            'changed::overflow-custom-icon', () => {
+                debug('overflow-custom-icon setting changed');
                 this._applyOverflow();
             },
             this
