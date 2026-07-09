@@ -608,9 +608,10 @@ const IconPickerDialog = GObject.registerClass({
         'icon-selected': { param_types: [GObject.TYPE_STRING] },
     },
 }, class IconPickerDialog extends Adw.Dialog {
-    _init(appId, displayName, currentIconName, currentIconGicon, settings, parentWindow) {
+    _init(appId, displayName, currentIconName, currentIconGicon, settings, parentWindow, options = null) {
+        const simpleKey = options?.simpleKey ?? null;
         super._init({
-            title: `Icon for ${displayName}`,
+            title: options?.title ?? `Icon for ${displayName}`,
             content_width: 450,
             content_height: 700,
         });
@@ -621,6 +622,7 @@ const IconPickerDialog = GObject.registerClass({
         this._currentIconName = currentIconName;
         this._currentIconGicon = currentIconGicon;
         this._parentWindow = parentWindow;
+        this._simpleKey = simpleKey;
         this._allIcons = [];  // Cache of discovered icons
 
         const toolbarView = new Adw.ToolbarView();
@@ -647,13 +649,15 @@ const IconPickerDialog = GObject.registerClass({
         content.append(previewGroup);
 
         const overrides = settings.get_value('icon-overrides').deep_unpack();
-        const currentOverride = overrides[appId] || null;
+        const currentOverride = simpleKey
+            ? (settings.get_string(simpleKey) || null)
+            : (overrides[appId] || null);
 
         this._previewImage = new Gtk.Image({
             pixel_size: 48,
         });
         if (currentOverride) {
-            this._previewImage.set_from_icon_name(currentOverride);
+            this._setPreviewFromValue(currentOverride);
         } else if (currentIconGicon) {
             // Mirror what's rendered on the AppRow — handles file-backed
             // icons (IconPixmap via temp file, custom path overrides) that
@@ -667,12 +671,15 @@ const IconPickerDialog = GObject.registerClass({
 
         const previewRow = new Adw.ActionRow({
             title: currentOverride ? this._getIconDisplayName(currentOverride) : 'Default',
-            subtitle: currentOverride ? 'Custom override' : 'Using app-provided icon',
+            subtitle: currentOverride
+                ? (simpleKey ? 'Custom icon' : 'Custom override')
+                : (simpleKey ? 'Using the default glyph' : 'Using app-provided icon'),
         });
         previewRow.add_prefix(this._previewImage);
         previewGroup.add(previewRow);
         this._previewRow = previewRow;
 
+        if (!simpleKey) {
         const fallbackApps = settings.get_strv('icon-fallback-overrides');
         this._fallbackRow = new Adw.SwitchRow({
             title: 'Use as Fallback Only',
@@ -748,6 +755,7 @@ const IconPickerDialog = GObject.registerClass({
                 }
             }
         });
+        }
 
         const filterBox = new Gtk.Box({
             orientation: Gtk.Orientation.HORIZONTAL,
@@ -957,7 +965,27 @@ const IconPickerDialog = GObject.registerClass({
         }
     }
 
+    _setPreviewFromValue(value) {
+        if (value && value.startsWith('/')) {
+            this._previewImage.set_from_gicon(
+                new Gio.FileIcon({ file: Gio.File.new_for_path(value) }));
+        } else if (value) {
+            this._previewImage.set_from_icon_name(value);
+        } else {
+            this._previewImage.set_from_icon_name('application-x-executable-symbolic');
+        }
+    }
+
     _selectIcon(iconName) {
+        if (this._simpleKey) {
+            this._settings.set_string(this._simpleKey, iconName);
+            this._setPreviewFromValue(iconName);
+            this._previewRow.set_title(this._getIconDisplayName(iconName));
+            this._previewRow.set_subtitle('Custom icon');
+            this.emit('icon-selected', iconName);
+            return;
+        }
+
         const overrides = this._settings.get_value('icon-overrides').deep_unpack();
         overrides[this._appId] = iconName;
         this._settings.set_value('icon-overrides', new GLib.Variant('a{ss}', overrides));
@@ -1004,6 +1032,15 @@ const IconPickerDialog = GObject.registerClass({
     }
 
     _clearOverride() {
+        if (this._simpleKey) {
+            this._settings.set_string(this._simpleKey, '');
+            this._setPreviewFromValue('');
+            this._previewRow.set_title('Default');
+            this._previewRow.set_subtitle('Using the default glyph');
+            this.emit('icon-selected', '');
+            return;
+        }
+
         const overrides = this._settings.get_value('icon-overrides').deep_unpack();
         delete overrides[this._appId];
         this._settings.set_value('icon-overrides', new GLib.Variant('a{ss}', overrides));
