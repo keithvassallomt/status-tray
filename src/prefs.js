@@ -1688,6 +1688,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         overflowIconModel.append('Static icon');
         overflowIconModel.append('Dynamic preview (colour)');
         overflowIconModel.append('Dynamic preview (monochrome)');
+        overflowIconModel.append('Custom icon');
         overflowIconRow.set_model(overflowIconModel);
 
         // Adw.ComboRow's default factory ellipsizes both the selected value and
@@ -1703,7 +1704,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         overflowIconRow.set_factory(overflowIconFactory);
 
         // ComboRow index ↔ stored value. Index order matches the appended rows.
-        const overflowIconValues = ['static', 'dynamic-original', 'dynamic-symbolic'];
+        const overflowIconValues = ['static', 'dynamic-original', 'dynamic-symbolic', 'custom'];
         const currentOverflowIconStyle = this._settings.get_string('overflow-icon-style');
         let currentIndex = overflowIconValues.indexOf(currentOverflowIconStyle);
         if (currentIndex < 0) {
@@ -1717,8 +1718,59 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         overflowIconRow.connect('notify::selected', () => {
             const selected = overflowIconRow.get_selected();
             this._settings.set_string('overflow-icon-style', overflowIconValues[selected] ?? 'static');
+            updateOverflowCustomVisibility();
         });
         overflowGroup.add(overflowIconRow);
+
+        const overflowCustomRow = new Adw.ActionRow({
+            title: 'Custom overflow icon',
+            subtitle: 'Using the default overflow glyph',
+        });
+        const overflowCustomPreview = new Gtk.Image({ pixel_size: 24 });
+        overflowCustomRow.add_prefix(overflowCustomPreview);
+
+        const overflowCustomButton = new Gtk.Button({
+            label: 'Choose…',
+            valign: Gtk.Align.CENTER,
+        });
+        overflowCustomRow.add_suffix(overflowCustomButton);
+        overflowCustomRow.set_activatable_widget(overflowCustomButton);
+        overflowGroup.add(overflowCustomRow);
+
+        const refreshOverflowCustomPreview = () => {
+            const value = this._settings.get_string('overflow-custom-icon');
+            if (!value) {
+                overflowCustomPreview.set_from_icon_name('image-x-generic-symbolic');
+                overflowCustomRow.set_subtitle('Using the default overflow glyph');
+                return;
+            }
+            if (value.startsWith('/')) {
+                overflowCustomPreview.set_from_gicon(
+                    new Gio.FileIcon({ file: Gio.File.new_for_path(value) }));
+            } else {
+                overflowCustomPreview.set_from_icon_name(value);
+            }
+            overflowCustomRow.set_subtitle(value);
+        };
+
+        const updateOverflowCustomVisibility = () => {
+            const isCustom =
+                this._settings.get_string('overflow-icon-style') === 'custom';
+            overflowCustomRow.set_visible(overflowEnabledRow.get_active() && isCustom);
+        };
+
+        refreshOverflowCustomPreview();
+        updateOverflowCustomVisibility();
+
+        overflowCustomButton.connect('clicked', () => {
+            const dialog = new IconPickerDialog(
+                null, 'Overflow Button', '', overflowCustomPreview.get_gicon(),
+                this._settings, this._window,
+                { simpleKey: 'overflow-custom-icon', title: 'Custom overflow icon' }
+            );
+            dialog.connect('icon-selected', () => refreshOverflowCustomPreview());
+            dialog.present(this._window);
+        });
 
         const overflowCountRow = new Adw.SpinRow({
             title: 'Inline icon limit',
@@ -1738,6 +1790,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         overflowEnabledRow.connect('notify::active', () => {
             overflowCountRow.set_sensitive(overflowEnabledRow.get_active());
             overflowIconRow.set_sensitive(overflowEnabledRow.get_active());
+            updateOverflowCustomVisibility();
         });
         overflowGroup.add(overflowCountRow);
 
