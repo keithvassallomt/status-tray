@@ -306,12 +306,14 @@ and the number of active `TrayItem`s exceeds `overflow-inline-count`.
 
 #### Responsibilities
 
-- Renders one of three ways depending on `overflow-icon-style`: a bundled glyph
+- Renders one of four ways depending on `overflow-icon-style`: a bundled glyph
   (`icons/status-tray.svg` / `icons/status-tray-symbolic.svg`, following the
-  current `icon-mode`), a colour preview of up to four overflowed tray icons, or
+  current `icon-mode`), a colour preview of up to four overflowed tray icons,
   a monochrome preview of them with a panel-background halo behind each glyph so
-  overlapping silhouettes separate. The dynamic previews set their own colour
-  treatment independently of `icon-mode`.
+  overlapping silhouettes separate, or a user-chosen custom icon
+  (`overflow-custom-icon`) rendered as-is at `icon-size`. The dynamic previews
+  set their own colour treatment independently of `icon-mode`; the custom icon
+  falls back to the bundled glyph if unset or the referenced file is missing.
 - Builds one `PopupMenu.PopupSubMenuMenuItem` per overflowed `TrayItem`,
   labelled with the app's display name and prefixed with a clone of that
   `TrayItem`'s gicon.
@@ -599,7 +601,8 @@ _activateMenuItem(itemId) {
 | `title-aliases` | `a{ss}` | `{}` | Display name → stable app ID (for apps that randomize SNI IDs) |
 | `overflow-enabled` | `b` | `false` | Enable the panel overflow button |
 | `overflow-inline-count` | `i` | `3` | Inline icon limit before items spill into the overflow menu; `0` keeps every tray item in overflow |
-| `overflow-icon-style` | `s` | `'static'` | `'static'` uses the bundled tray glyph; `'dynamic-original'` previews up to four hidden icons in colour; `'dynamic-symbolic'` previews them in monochrome with a separating outline |
+| `overflow-icon-style` | `s` | `'static'` | `'static'` uses the bundled tray glyph; `'dynamic-original'` previews up to four hidden icons in colour; `'dynamic-symbolic'` previews them in monochrome with a separating outline; `'custom'` uses the icon set in `overflow-custom-icon` |
+| `overflow-custom-icon` | `s` | `''` | Theme icon name or absolute file path for the overflow button when `overflow-icon-style` is `'custom'`; falls back to the bundled glyph when empty or the file is missing |
 
 ### Effect Override Format
 
@@ -649,6 +652,9 @@ StatusTrayPreferences (Adw.PreferencesWindow)
     ├── Adw.PreferencesGroup ("Panel Overflow")
     │   ├── Enable overflow icon (Adw.SwitchRow) → overflow-enabled
     │   ├── Overflow button icon (Adw.ComboRow)  → overflow-icon-style
+    │   ├── Custom overflow icon (Adw.ActionRow) → overflow-custom-icon
+    │   │   (visible only when overflow-icon-style is 'custom'; "Choose…"
+    │   │   opens the icon picker for a theme icon or image file)
     │   └── Inline icon limit (Adw.SpinRow)      → overflow-inline-count
     │
     ├── Adw.PreferencesGroup ("Tray Apps")

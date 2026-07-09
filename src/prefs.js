@@ -608,9 +608,10 @@ const IconPickerDialog = GObject.registerClass({
         'icon-selected': { param_types: [GObject.TYPE_STRING] },
     },
 }, class IconPickerDialog extends Adw.Dialog {
-    _init(appId, displayName, currentIconName, currentIconGicon, settings, parentWindow) {
+    _init(appId, displayName, currentIconName, currentIconGicon, settings, parentWindow, options = null) {
+        const simpleKey = options?.simpleKey ?? null;
         super._init({
-            title: `Icon for ${displayName}`,
+            title: options?.title ?? `Icon for ${displayName}`,
             content_width: 450,
             content_height: 700,
         });
@@ -621,6 +622,7 @@ const IconPickerDialog = GObject.registerClass({
         this._currentIconName = currentIconName;
         this._currentIconGicon = currentIconGicon;
         this._parentWindow = parentWindow;
+        this._simpleKey = simpleKey;
         this._allIcons = [];  // Cache of discovered icons
 
         const toolbarView = new Adw.ToolbarView();
@@ -646,14 +648,15 @@ const IconPickerDialog = GObject.registerClass({
         });
         content.append(previewGroup);
 
-        const overrides = settings.get_value('icon-overrides').deep_unpack();
-        const currentOverride = overrides[appId] || null;
+        const currentOverride = simpleKey
+            ? (settings.get_string(simpleKey) || null)
+            : (settings.get_value('icon-overrides').deep_unpack()[appId] || null);
 
         this._previewImage = new Gtk.Image({
             pixel_size: 48,
         });
         if (currentOverride) {
-            this._previewImage.set_from_icon_name(currentOverride);
+            this._setPreviewFromValue(currentOverride);
         } else if (currentIconGicon) {
             // Mirror what's rendered on the AppRow — handles file-backed
             // icons (IconPixmap via temp file, custom path overrides) that
@@ -667,87 +670,91 @@ const IconPickerDialog = GObject.registerClass({
 
         const previewRow = new Adw.ActionRow({
             title: currentOverride ? this._getIconDisplayName(currentOverride) : 'Default',
-            subtitle: currentOverride ? 'Custom override' : 'Using app-provided icon',
+            subtitle: currentOverride
+                ? (simpleKey ? 'Custom icon' : 'Custom override')
+                : (simpleKey ? 'Using the default glyph' : 'Using app-provided icon'),
         });
         previewRow.add_prefix(this._previewImage);
         previewGroup.add(previewRow);
         this._previewRow = previewRow;
 
-        const fallbackApps = settings.get_strv('icon-fallback-overrides');
-        this._fallbackRow = new Adw.SwitchRow({
-            title: 'Use as Fallback Only',
-            subtitle: 'Only apply when the app sends a low-quality icon or no icon',
-        });
-        this._fallbackRow.set_active(fallbackApps.includes(appId));
-        previewGroup.add(this._fallbackRow);
+        if (!simpleKey) {
+            const fallbackApps = settings.get_strv('icon-fallback-overrides');
+            this._fallbackRow = new Adw.SwitchRow({
+                title: 'Use as Fallback Only',
+                subtitle: 'Only apply when the app sends a low-quality icon or no icon',
+            });
+            this._fallbackRow.set_active(fallbackApps.includes(appId));
+            previewGroup.add(this._fallbackRow);
 
-        this._fallbackRow.connect('notify::active', () => {
-            const apps = this._settings.get_strv('icon-fallback-overrides');
-            const index = apps.indexOf(this._appId);
-            if (this._fallbackRow.get_active() && index === -1) {
-                apps.push(this._appId);
-            } else if (!this._fallbackRow.get_active() && index > -1) {
-                apps.splice(index, 1);
-            }
-            this._settings.set_strv('icon-fallback-overrides', apps);
+            this._fallbackRow.connect('notify::active', () => {
+                const apps = this._settings.get_strv('icon-fallback-overrides');
+                const index = apps.indexOf(this._appId);
+                if (this._fallbackRow.get_active() && index === -1) {
+                    apps.push(this._appId);
+                } else if (!this._fallbackRow.get_active() && index > -1) {
+                    apps.splice(index, 1);
+                }
+                this._settings.set_strv('icon-fallback-overrides', apps);
 
-            // Lock is incompatible with fallback — disable it when fallback is on
-            if (this._fallbackRow.get_active()) {
-                this._lockRow.set_active(false);
+                // Lock is incompatible with fallback — disable it when fallback is on
+                if (this._fallbackRow.get_active()) {
+                    this._lockRow.set_active(false);
+                    this._lockRow.set_sensitive(false);
+                } else {
+                    this._lockRow.set_sensitive(true);
+                }
+            });
+
+            const lockApps = settings.get_strv('icon-lock-overrides');
+            this._lockRow = new Adw.SwitchRow({
+                title: 'Ignore App Status Icons',
+                subtitle: 'Keep the chosen icon even when the app changes its status icon',
+            });
+            this._lockRow.set_active(lockApps.includes(appId));
+            // Disable lock when fallback is active
+            if (this._fallbackRow.get_active())
                 this._lockRow.set_sensitive(false);
-            } else {
-                this._lockRow.set_sensitive(true);
-            }
-        });
+            previewGroup.add(this._lockRow);
 
-        const lockApps = settings.get_strv('icon-lock-overrides');
-        this._lockRow = new Adw.SwitchRow({
-            title: 'Ignore App Status Icons',
-            subtitle: 'Keep the chosen icon even when the app changes its status icon',
-        });
-        this._lockRow.set_active(lockApps.includes(appId));
-        // Disable lock when fallback is active
-        if (this._fallbackRow.get_active())
-            this._lockRow.set_sensitive(false);
-        previewGroup.add(this._lockRow);
-
-        this._lockRow.connect('notify::active', () => {
-            const apps = this._settings.get_strv('icon-lock-overrides');
-            const index = apps.indexOf(this._appId);
-            if (this._lockRow.get_active() && index === -1) {
-                apps.push(this._appId);
-            } else if (!this._lockRow.get_active() && index > -1) {
-                apps.splice(index, 1);
-            }
-            this._settings.set_strv('icon-lock-overrides', apps);
-        });
-
-        const aliases = settings.get_value('title-aliases').deep_unpack();
-        this._aliasRow = new Adw.SwitchRow({
-            title: 'Match by App Name',
-            subtitle: `Identify this app as "${displayName}" instead of its process ID. Enable for apps that randomize their ID on every launch.`,
-        });
-        this._aliasRow.set_active(aliases[displayName] !== undefined);
-        previewGroup.add(this._aliasRow);
-
-        this._aliasRow.connect('notify::active', () => {
-            const map = this._settings.get_value('title-aliases').deep_unpack();
-            if (this._aliasRow.get_active()) {
-                if (map[this._displayName] === undefined) {
-                    map[this._displayName] = this._displayName;
-                    this._settings.set_value('title-aliases', new GLib.Variant('a{ss}', map));
+            this._lockRow.connect('notify::active', () => {
+                const apps = this._settings.get_strv('icon-lock-overrides');
+                const index = apps.indexOf(this._appId);
+                if (this._lockRow.get_active() && index === -1) {
+                    apps.push(this._appId);
+                } else if (!this._lockRow.get_active() && index > -1) {
+                    apps.splice(index, 1);
                 }
-                if (this._appId !== this._displayName) {
-                    migrateAppIdAcrossSettings(this._settings, this._appId, this._displayName);
-                    this._appId = this._displayName;
+                this._settings.set_strv('icon-lock-overrides', apps);
+            });
+
+            const aliases = settings.get_value('title-aliases').deep_unpack();
+            this._aliasRow = new Adw.SwitchRow({
+                title: 'Match by App Name',
+                subtitle: `Identify this app as "${displayName}" instead of its process ID. Enable for apps that randomize their ID on every launch.`,
+            });
+            this._aliasRow.set_active(aliases[displayName] !== undefined);
+            previewGroup.add(this._aliasRow);
+
+            this._aliasRow.connect('notify::active', () => {
+                const map = this._settings.get_value('title-aliases').deep_unpack();
+                if (this._aliasRow.get_active()) {
+                    if (map[this._displayName] === undefined) {
+                        map[this._displayName] = this._displayName;
+                        this._settings.set_value('title-aliases', new GLib.Variant('a{ss}', map));
+                    }
+                    if (this._appId !== this._displayName) {
+                        migrateAppIdAcrossSettings(this._settings, this._appId, this._displayName);
+                        this._appId = this._displayName;
+                    }
+                } else {
+                    if (map[this._displayName] !== undefined) {
+                        delete map[this._displayName];
+                        this._settings.set_value('title-aliases', new GLib.Variant('a{ss}', map));
+                    }
                 }
-            } else {
-                if (map[this._displayName] !== undefined) {
-                    delete map[this._displayName];
-                    this._settings.set_value('title-aliases', new GLib.Variant('a{ss}', map));
-                }
-            }
-        });
+            });
+        }
 
         const filterBox = new Gtk.Box({
             orientation: Gtk.Orientation.HORIZONTAL,
@@ -957,7 +964,27 @@ const IconPickerDialog = GObject.registerClass({
         }
     }
 
+    _setPreviewFromValue(value) {
+        if (value && value.startsWith('/')) {
+            this._previewImage.set_from_gicon(
+                new Gio.FileIcon({ file: Gio.File.new_for_path(value) }));
+        } else if (value) {
+            this._previewImage.set_from_icon_name(value);
+        } else {
+            this._previewImage.set_from_icon_name('application-x-executable-symbolic');
+        }
+    }
+
     _selectIcon(iconName) {
+        if (this._simpleKey) {
+            this._settings.set_string(this._simpleKey, iconName);
+            this._setPreviewFromValue(iconName);
+            this._previewRow.set_title(this._getIconDisplayName(iconName));
+            this._previewRow.set_subtitle('Custom icon');
+            this.emit('icon-selected', iconName);
+            return;
+        }
+
         const overrides = this._settings.get_value('icon-overrides').deep_unpack();
         overrides[this._appId] = iconName;
         this._settings.set_value('icon-overrides', new GLib.Variant('a{ss}', overrides));
@@ -1004,6 +1031,15 @@ const IconPickerDialog = GObject.registerClass({
     }
 
     _clearOverride() {
+        if (this._simpleKey) {
+            this._settings.set_string(this._simpleKey, '');
+            this._setPreviewFromValue('');
+            this._previewRow.set_title('Default');
+            this._previewRow.set_subtitle('Using the default glyph');
+            this.emit('icon-selected', '');
+            return;
+        }
+
         const overrides = this._settings.get_value('icon-overrides').deep_unpack();
         delete overrides[this._appId];
         this._settings.set_value('icon-overrides', new GLib.Variant('a{ss}', overrides));
@@ -1644,13 +1680,14 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         const overflowIconRow = new Adw.ComboRow({
             title: 'Overflow button icon',
-            subtitle: 'Standard icon or a live preview',
+            subtitle: 'Standard icon, a live preview, or your own custom icon',
             sensitive: overflowEnabledRow.get_active(),
         });
         const overflowIconModel = new Gtk.StringList();
         overflowIconModel.append('Static icon');
         overflowIconModel.append('Dynamic preview (colour)');
         overflowIconModel.append('Dynamic preview (monochrome)');
+        overflowIconModel.append('Custom icon');
         overflowIconRow.set_model(overflowIconModel);
 
         // Adw.ComboRow's default factory ellipsizes both the selected value and
@@ -1666,7 +1703,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         overflowIconRow.set_factory(overflowIconFactory);
 
         // ComboRow index ↔ stored value. Index order matches the appended rows.
-        const overflowIconValues = ['static', 'dynamic-original', 'dynamic-symbolic'];
+        const overflowIconValues = ['static', 'dynamic-original', 'dynamic-symbolic', 'custom'];
         const currentOverflowIconStyle = this._settings.get_string('overflow-icon-style');
         let currentIndex = overflowIconValues.indexOf(currentOverflowIconStyle);
         if (currentIndex < 0) {
@@ -1680,8 +1717,59 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         overflowIconRow.connect('notify::selected', () => {
             const selected = overflowIconRow.get_selected();
             this._settings.set_string('overflow-icon-style', overflowIconValues[selected] ?? 'static');
+            updateOverflowCustomVisibility();
         });
         overflowGroup.add(overflowIconRow);
+
+        const overflowCustomRow = new Adw.ActionRow({
+            title: 'Custom overflow icon',
+            subtitle: 'Using the default overflow glyph',
+        });
+        const overflowCustomPreview = new Gtk.Image({ pixel_size: 24 });
+        overflowCustomRow.add_prefix(overflowCustomPreview);
+
+        const overflowCustomButton = new Gtk.Button({
+            label: 'Choose…',
+            valign: Gtk.Align.CENTER,
+        });
+        overflowCustomRow.add_suffix(overflowCustomButton);
+        overflowCustomRow.set_activatable_widget(overflowCustomButton);
+        overflowGroup.add(overflowCustomRow);
+
+        const refreshOverflowCustomPreview = () => {
+            const value = this._settings.get_string('overflow-custom-icon');
+            if (!value) {
+                overflowCustomPreview.set_from_icon_name('image-x-generic-symbolic');
+                overflowCustomRow.set_subtitle('Using the default overflow glyph');
+                return;
+            }
+            if (value.startsWith('/')) {
+                overflowCustomPreview.set_from_gicon(
+                    new Gio.FileIcon({ file: Gio.File.new_for_path(value) }));
+            } else {
+                overflowCustomPreview.set_from_icon_name(value);
+            }
+            overflowCustomRow.set_subtitle(value);
+        };
+
+        const updateOverflowCustomVisibility = () => {
+            const isCustom =
+                this._settings.get_string('overflow-icon-style') === 'custom';
+            overflowCustomRow.set_visible(overflowEnabledRow.get_active() && isCustom);
+        };
+
+        refreshOverflowCustomPreview();
+        updateOverflowCustomVisibility();
+
+        overflowCustomButton.connect('clicked', () => {
+            const dialog = new IconPickerDialog(
+                null, 'Overflow Button', '', overflowCustomPreview.get_gicon(),
+                this._settings, this._window,
+                { simpleKey: 'overflow-custom-icon', title: 'Custom overflow icon' }
+            );
+            dialog.connect('icon-selected', () => refreshOverflowCustomPreview());
+            dialog.present(this._window);
+        });
 
         const overflowCountRow = new Adw.SpinRow({
             title: 'Inline icon limit',
@@ -1701,6 +1789,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         overflowEnabledRow.connect('notify::active', () => {
             overflowCountRow.set_sensitive(overflowEnabledRow.get_active());
             overflowIconRow.set_sensitive(overflowEnabledRow.get_active());
+            updateOverflowCustomVisibility();
         });
         overflowGroup.add(overflowCountRow);
 
