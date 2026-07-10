@@ -4,6 +4,12 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- Fixed the per-app icon effect preview showing a broken "image-missing" glyph for apps whose `IconName` is an absolute file path rather than a themed icon name (e.g. Rustdesk, which publishes `/run/user/<uid>/tray-icon/*.png`). The Effect Settings dialog passed the path straight to `Gtk.IconTheme.lookup_icon`, which treats it as a theme name and returns the missing-icon paintable. `_setIconFromName` now detects absolute paths and loads the file directly into the preview pixbuf, mirroring the main icon-list preview, so effects render against the real icon.
+- Lowered the default brightness applied when recolouring pixmap/full-colour icons for symbolic (monochrome) mode in dark themes from `+0.50` to `-0.25`. The previous value over-brightened recoloured icons and washed them out; the new default keeps them legible. Light mode is unchanged (`-0.5`). The default is kept in sync between the live tray (`extension.js`) and the effect dialog (`prefs.js`).
+
 ## [1.12] - 2026-07-10
 
 ### Added

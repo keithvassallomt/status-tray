@@ -1221,7 +1221,7 @@ const TrayItem = GObject.registerClass({
         const dark = isDarkMode();
 
         let desaturation = 1.0;
-        let brightness = dark ? 0.5 : -0.5;
+        let brightness = dark ? -0.25 : -0.5;
         let contrast = 0.6;
         let useTint = false;
         let tintColor = [1.0, 1.0, 1.0];  // White default

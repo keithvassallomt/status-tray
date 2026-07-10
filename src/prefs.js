@@ -1228,7 +1228,7 @@ const IconEffectDialog = GObject.registerClass({
 
         // Defaults - these match what extension.js uses in _applySymbolicStyle
         this._desaturation = 1.0;
-        this._brightness = isDark ? 0.5 : -0.5;  // Match tray: lighten in dark mode, darken in light mode
+        this._brightness = isDark ? -0.25 : -0.5;  // Match tray: darken slightly in dark mode, more in light mode
         this._contrast = 0.6;
         this._useTint = false;
         this._tintColor = [1.0, 1.0, 1.0];
@@ -1352,6 +1352,21 @@ const IconEffectDialog = GObject.registerClass({
 
     _setIconFromName(iconName) {
         this._isSymbolicIcon = iconName?.endsWith('-symbolic') ?? false;
+
+        // Some apps (e.g. Rustdesk) set IconName to an absolute file path rather
+        // than a themed icon name.  Load it directly — Gtk.IconTheme.lookup_icon
+        // would treat the path as a name and return the "image-missing" icon,
+        // breaking the preview.  Mirrors _updateIcon's startsWith('/') handling.
+        if (iconName && iconName.startsWith('/')) {
+            try {
+                this._originalPixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(iconName, 64, 64);
+                this._updatePreview();
+                return;
+            } catch (e) {
+                debug(`IconEffectDialog: Failed to load icon from path ${iconName}: ${e.message}`);
+            }
+        }
+
         try {
             const iconTheme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default());
             const iconPaintable = iconTheme.lookup_icon(
