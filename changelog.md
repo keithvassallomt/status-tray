@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.12] - 2026-07-10
 
 ### Added
 - Icon Size setting under Appearance: a slider from 14px to 20px (default 16px). Main tray icons and the overflow button resize live to match.
