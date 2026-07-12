@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.13] - 2026-07-12
 
 ### Fixed
 - Fixed the per-app icon effect preview showing a broken "image-missing" glyph for apps whose `IconName` is an absolute file path rather than a themed icon name (e.g. Rustdesk, which publishes `/run/user/<uid>/tray-icon/*.png`). The Effect Settings dialog passed the path straight to `Gtk.IconTheme.lookup_icon`, which treats it as a theme name and returns the missing-icon paintable. `_setIconFromName` now detects absolute paths and loads the file directly into the preview pixbuf, mirroring the main icon-list preview, so effects render against the real icon.

@@ -1354,13 +1354,12 @@ const IconEffectDialog = GObject.registerClass({
         this._isSymbolicIcon = iconName?.endsWith('-symbolic') ?? false;
 
         // Some apps (e.g. Rustdesk) set IconName to an absolute file path rather
-        // than a themed icon name.  Load it directly — Gtk.IconTheme.lookup_icon
+        // than a themed icon name. Load it directly — Gtk.IconTheme.lookup_icon
         // would treat the path as a name and return the "image-missing" icon,
-        // breaking the preview.  Mirrors _updateIcon's startsWith('/') handling.
+        // breaking the preview. Mirrors _updateIcon's startsWith('/') handling.
         if (iconName && iconName.startsWith('/')) {
             try {
-                this._originalPixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(iconName, 64, 64);
-                this._updatePreview();
+                this._setPreviewFromFile(iconName);
                 return;
             } catch (e) {
                 debug(`IconEffectDialog: Failed to load icon from path ${iconName}: ${e.message}`);
@@ -1383,8 +1382,7 @@ const IconEffectDialog = GObject.registerClass({
                 if (file) {
                     const path = file.get_path();
                     if (path) {
-                        this._originalPixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(path, 64, 64);
-                        this._updatePreview();
+                        this._setPreviewFromFile(path);
                         return;
                     }
                 }
@@ -1394,6 +1392,11 @@ const IconEffectDialog = GObject.registerClass({
         }
 
         this._previewImage.set_from_icon_name(iconName);
+    }
+
+    _setPreviewFromFile(path) {
+        this._originalPixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(path, 64, 64);
+        this._updatePreview();
     }
 
     _argbToRgba(argbData, width, height) {
