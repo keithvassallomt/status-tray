@@ -270,6 +270,7 @@ Main extension controller. Extends `Extension.Extension`.
 'changed::disabled-apps'           → _refreshItems()
 'changed::icon-mode'               → _refreshIconStyles()
 'changed::icon-size'               → _refreshIconSizes()
+'changed::icon-padding'            → _refreshPadding()
 'changed::icon-overrides'          → _refreshIcons()  // only updates affected items
 'changed::icon-effect-overrides'   → _refreshIconStyles()
 'changed::icon-fallback-overrides' → _refreshIcons()

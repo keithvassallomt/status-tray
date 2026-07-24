@@ -4,6 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- Padding between icons setting under Appearance: a slider from 0px to 20px (default 4px) controlling the gap between adjacent tray icons. The value is the total gap between two icons; both the inline tray icons and the overflow button re-space live. Thanks to [@zamszowy](https://github.com/zamszowy) for the request (#20).
+
 ## [1.13] - 2026-07-12
 
 ### Fixed
