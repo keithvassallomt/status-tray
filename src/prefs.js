@@ -1680,6 +1680,51 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         iconSizeRow.add_suffix(iconSizeBox);
         appearanceGroup.add(iconSizeRow);
 
+        const iconPaddingRow = new Adw.ActionRow({
+            title: 'Padding between icons',
+            subtitle: 'Gap in pixels between adjacent tray icons',
+        });
+
+        const iconPaddingBox = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 8,
+            valign: Gtk.Align.CENTER,
+        });
+
+        const iconPaddingScale = new Gtk.Scale({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            adjustment: new Gtk.Adjustment({
+                lower: 0,
+                upper: 20,
+                step_increment: 1,
+                page_increment: 1,
+                value: this._settings.get_int('icon-padding'),
+            }),
+            draw_value: false,
+            round_digits: 0,
+            hexpand: true,
+            width_request: 160,
+        });
+        iconPaddingScale.add_mark(4, Gtk.PositionType.BOTTOM, 'Default');
+
+        const iconPaddingValue = new Gtk.Label({
+            label: `${this._settings.get_int('icon-padding')} px`,
+            width_chars: 5,
+            xalign: 0,
+        });
+
+        iconPaddingScale.connect('value-changed', () => {
+            const px = Math.round(iconPaddingScale.get_value());
+            iconPaddingValue.set_label(`${px} px`);
+            if (this._settings.get_int('icon-padding') !== px)
+                this._settings.set_int('icon-padding', px);
+        });
+
+        iconPaddingBox.append(iconPaddingScale);
+        iconPaddingBox.append(iconPaddingValue);
+        iconPaddingRow.add_suffix(iconPaddingBox);
+        appearanceGroup.add(iconPaddingRow);
+
         const overflowGroup = new Adw.PreferencesGroup({
             title: 'Panel Overflow',
             description: 'Collapse extra tray icons into an overflow menu at the right of the tray',
