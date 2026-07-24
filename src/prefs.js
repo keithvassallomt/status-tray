@@ -1609,8 +1609,8 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         window.add(page);
 
         const appearanceGroup = new Adw.PreferencesGroup({
-            title: 'Appearance',
-            description: 'Control how tray icons look in the panel',
+            title: 'Appearance & Behaviour',
+            description: 'Control how tray icons look and behave in the panel',
         });
         page.add(appearanceGroup);
 
@@ -1724,6 +1724,38 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         iconPaddingBox.append(iconPaddingValue);
         iconPaddingRow.add_suffix(iconPaddingBox);
         appearanceGroup.add(iconPaddingRow);
+
+        const clickActionRow = new Adw.ComboRow({
+            title: 'Icon interaction',
+            subtitle: 'What clicking a tray icon does',
+        });
+        const clickActionModel = new Gtk.StringList();
+        clickActionModel.append('Left click to show the menu (default)');
+        clickActionModel.append('Left click to open app, right-click to show the menu');
+        clickActionModel.append('Double-click to open the app, single-click to show the menu');
+        clickActionRow.set_model(clickActionModel);
+
+        // Adw.ComboRow's default factory ellipsizes long labels; a plain
+        // Gtk.Label doesn't, so the row and popup size to the full text.
+        const clickActionFactory = new Gtk.SignalListItemFactory();
+        clickActionFactory.connect('setup', (_factory, item) => {
+            item.set_child(new Gtk.Label({ xalign: 0 }));
+        });
+        clickActionFactory.connect('bind', (_factory, item) => {
+            item.get_child().set_label(item.get_item().get_string());
+        });
+        clickActionRow.set_factory(clickActionFactory);
+
+        const clickActionValues = ['menu', 'activate', 'activate-double'];
+        const currentClickAction = this._settings.get_string('click-action');
+        const clickActionIndex = clickActionValues.indexOf(currentClickAction);
+        clickActionRow.set_selected(clickActionIndex < 0 ? 0 : clickActionIndex);
+
+        clickActionRow.connect('notify::selected', () => {
+            const selected = clickActionRow.get_selected();
+            this._settings.set_string('click-action', clickActionValues[selected] ?? 'menu');
+        });
+        appearanceGroup.add(clickActionRow);
 
         const overflowGroup = new Adw.PreferencesGroup({
             title: 'Panel Overflow',
