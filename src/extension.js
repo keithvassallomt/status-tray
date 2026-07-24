@@ -360,6 +360,7 @@ const TrayItem = GObject.registerClass({
         this.add_child(this._icon);
 
         this.add_style_class_name('status-tray-button');
+        this._applyPadding();
 
         this._initProxy();
 
@@ -1287,6 +1288,11 @@ const TrayItem = GObject.registerClass({
             this.emit('display-changed');
     }
 
+    _applyPadding() {
+        const pad = this._settings.get_int('icon-padding') / 2;
+        this.set_style(`-natural-hpadding: ${pad}px; -minimum-hpadding: ${pad}px;`);
+    }
+
     _applyIconSize() {
         // Content/pixmap icons size via explicit width/height, which icon-size
         // CSS won't change; resize the actor directly without re-looking-up the
@@ -1827,12 +1833,18 @@ class OverflowButton extends PanelMenu.Button {
 
         this.add_style_class_name('status-tray-button');
         this.add_style_class_name('status-tray-overflow-button');
+        this._applyPadding();
 
         this.updateOverflowIcon();
 
         // Rows keyed by the source TrayItem so we can update in place on
         // display-changed signals without rebuilding the whole submenu.
         this._rows = new Map();
+    }
+
+    _applyPadding() {
+        const pad = this._settings.get_int('icon-padding') / 2;
+        this.set_style(`-natural-hpadding: ${pad}px; -minimum-hpadding: ${pad}px;`);
     }
 
     updateOverflowIcon() {
@@ -2679,6 +2691,10 @@ export default class StatusTrayExtension extends Extension {
                 debug('icon-size setting changed');
                 this._refreshIconSizes();
             },
+            'changed::icon-padding', () => {
+                debug('icon-padding setting changed');
+                this._refreshPadding();
+            },
             'changed::icon-overrides', () => {
                 debug('icon-overrides setting changed');
                 this._refreshIcons();
@@ -2900,6 +2916,13 @@ export default class StatusTrayExtension extends Extension {
             item._applyIconSize();
         }
         this._applyOverflow();
+    }
+
+    _refreshPadding() {
+        for (const [, item] of this._items)
+            item._applyPadding();
+        if (this._overflowButton)
+            this._overflowButton._applyPadding();
     }
 
     _refreshIcons() {
