@@ -594,6 +594,7 @@ _activateMenuItem(itemId) {
 | `disabled-apps` | `as` | `[]` | App IDs to hide |
 | `icon-mode` | `s` | `'symbolic'` | `'symbolic'` or `'original'` |
 | `icon-size` | `i` | `16` | Size in pixels of tray icons shown in the top bar and the overflow button's dynamic preview; range 14-20 |
+| `icon-padding` | `i` | `4` | Gap in pixels between adjacent tray icons; applied as half this value of horizontal padding per side to each tray button and the overflow button; range 0-20 |
 | `app-order` | `as` | `[]` | Custom app ordering |
 | `icon-overrides` | `a{ss}` | `{}` | App ID → icon name/path |
 | `icon-fallback-overrides` | `as` | `[]` | App IDs where override is fallback-only |
@@ -648,7 +649,8 @@ StatusTrayPreferences (Adw.PreferencesWindow)
 └── Adw.PreferencesPage ("General")
     ├── Adw.PreferencesGroup ("Appearance")
     │   ├── Icon Style (Adw.ComboRow) → icon-mode
-    │   └── Icon Size (Adw.ActionRow + Gtk.Scale) → icon-size
+    │   ├── Icon Size (Adw.ActionRow + Gtk.Scale) → icon-size
+    │   └── Padding between icons (Adw.ActionRow + Gtk.Scale) → icon-padding
     │
     ├── Adw.PreferencesGroup ("Panel Overflow")
     │   ├── Enable overflow icon (Adw.SwitchRow) → overflow-enabled
