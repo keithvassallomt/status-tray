@@ -1870,6 +1870,10 @@ const TrayItem = GObject.registerClass({
                 try {
                     conn.call_finish(result);
                 } catch (e) {
+                    // Cancellation means the item was destroyed while the call
+                    // was in flight; the menu/actor are gone, so don't fall back.
+                    if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                        return;
                     debug(`${method} failed for ${this._busName}: ${e}`);
                     if (onError)
                         onError();
