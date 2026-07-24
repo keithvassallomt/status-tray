@@ -21,6 +21,13 @@
       <description>Size in pixels of tray icons shown in the top bar. Range: 14-20.</description>
     </key>
 
+    <key name="icon-padding" type="i">
+      <default>4</default>
+      <range min="0" max="20"/>
+      <summary>Padding between tray icons</summary>
+      <description>Gap in pixels between adjacent tray icons in the panel. Applied as half this value of horizontal padding on each side of every icon. Range: 0-20.</description>
+    </key>
+
     <key name="app-order" type="as">
       <default>[]</default>
       <summary>App order</summary>
