@@ -28,6 +28,17 @@
       <description>Gap in pixels between adjacent tray icons in the panel. Applied as half this value of horizontal padding on each side of every icon. Range: 0-20.</description>
     </key>
 
+    <key name="click-action" type="s">
+      <choices>
+        <choice value="menu"/>
+        <choice value="activate"/>
+        <choice value="activate-double"/>
+      </choices>
+      <default>'menu'</default>
+      <summary>Tray icon click action</summary>
+      <description>What a left click on a tray icon does. 'menu' shows the app menu (default). 'activate' opens the app window on left click and shows the menu on right click. 'activate-double' opens the app window on double click and shows the menu on single click. Right click always shows the menu; middle click always triggers the app's secondary action.</description>
+    </key>
+
     <key name="app-order" type="as">
       <default>[]</default>
       <summary>App order</summary>
