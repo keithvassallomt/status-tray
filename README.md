@@ -14,6 +14,8 @@ A GNOME Shell extension that brings back the system tray for applications using 
 - **Automatic Discovery** - Finds and displays all tray icons automatically
 - **Native Menus** - Full support for application context menus via DBusMenu
 - **Dual Icon Modes** - Choose between symbolic (monochrome) or original (colored) icons
+- **Adjustable Size & Spacing** - Set the tray icon size and the gap between icons
+- **Configurable Click Action** - Show the menu, or open the app on click or double-click
 - **Highly Customizable** - Per-app icon overrides, effects, and ordering
 - **Drag & Drop Reordering** - Arrange tray icons in your preferred order
 - **Panel Overflow** - Optionally collapse extra icons into a single overflow button
@@ -99,6 +101,32 @@ Choose how tray icons are displayed:
 
 ![Icon modes comparison](assets/screenshot-icon-modes.png)
 
+### Icon Size
+
+Set the size of tray icons in the panel with the **Icon Size** slider, from 14
+to 20 pixels (default 16). Panel icons and the overflow button resize
+immediately.
+
+### Padding Between Icons
+
+Adjust the gap between adjacent tray icons with the **Padding between icons**
+slider, from 0 to 20 pixels (default 4). The value is the total gap between two
+neighbouring icons.
+
+### Icon Interaction
+
+Choose what clicking a tray icon does:
+
+| Mode | Behaviour |
+|------|-----------|
+| **Left click to show the menu** (default) | Left or right click opens the app menu |
+| **Left click to open app, right-click to show the menu** | Left click opens the app window; right click opens the menu |
+| **Double-click to open the app, single-click to show the menu** | Double click opens the app window; single click opens the menu |
+
+In every mode, right click shows the menu and middle click triggers the app's
+secondary action. Apps that don't expose a working activate action fall back to
+showing the menu.
+
 ### App Management
 
 - **Enable/Disable Apps** - Toggle visibility for individual applications
@@ -123,8 +151,9 @@ button at the right of the tray. Click it to get a menu that lists each
 collapsed app, with each app's full menu available inline as a submenu.
 
 - **Enable overflow icon** - Turn the feature on or off (disabled by default)
-- **Overflow button icon** - Keep the static tray glyph (default), or show a
-  dynamic preview of up to 4 hidden icons in colour or in monochrome
+- **Overflow button icon** - Keep the static tray glyph (default), show a
+  dynamic preview of up to 4 hidden icons in colour or in monochrome, or set
+  your own custom icon (a theme icon or an image file)
 - **Inline icon limit** - Choose how many icons stay directly in the panel
   (0-20) before the rest overflow. Set it to 0 to keep every tray item in the
   overflow menu.
