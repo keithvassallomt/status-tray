@@ -205,6 +205,7 @@ const SNI_INTERFACE_XML = `
     <property name="AttentionIconPixmap" type="a(iiay)" access="read"/>
     <property name="AttentionMovieName" type="s" access="read"/>
     <property name="ToolTip" type="(sa(iiay)ss)" access="read"/>
+    <property name="ItemIsMenu" type="b" access="read"/>
     <method name="ContextMenu">
       <arg name="x" type="i" direction="in"/>
       <arg name="y" type="i" direction="in"/>
@@ -348,6 +349,7 @@ const TrayItem = GObject.registerClass({
         this._settings = settings;
         this._proxy = null;
         this._cancellable = new Gio.Cancellable();
+        this._clickTimeoutId = 0;
 
         // Preliminary ID; updated later with SNI Id/ToolTip when available
         this._appId = this._extractId(busName, objectPath);
@@ -1782,11 +1784,108 @@ const TrayItem = GObject.registerClass({
         );
     }
 
+    vfunc_event(event) {
+        if (event.type() !== Clutter.EventType.BUTTON_PRESS)
+            return super.vfunc_event(event);
+
+        const button = event.get_button();
+
+        if (button === Clutter.BUTTON_SECONDARY) {
+            this.menu.toggle();
+            return Clutter.EVENT_STOP;
+        }
+
+        if (button === Clutter.BUTTON_MIDDLE) {
+            this._secondaryActivate();
+            return Clutter.EVENT_STOP;
+        }
+
+        if (button !== Clutter.BUTTON_PRIMARY)
+            return super.vfunc_event(event);
+
+        const mode = this._settings.get_string('click-action');
+
+        if (mode === 'menu')
+            return super.vfunc_event(event);
+
+        if (mode === 'activate') {
+            this._primaryActivate();
+            return Clutter.EVENT_STOP;
+        }
+
+        // 'activate-double': open on double click, menu on single click. The
+        // single-click menu waits out the double-click interval so a second
+        // press can cancel it.
+        if (event.get_click_count() >= 2) {
+            this._clearClickTimeout();
+            this._primaryActivate();
+        } else if (!this._clickTimeoutId) {
+            const delay = Clutter.Settings.get_default().double_click_time;
+            this._clickTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+                this._clickTimeoutId = 0;
+                this.menu.toggle();
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+        return Clutter.EVENT_STOP;
+    }
+
+    _clearClickTimeout() {
+        if (this._clickTimeoutId) {
+            GLib.source_remove(this._clickTimeoutId);
+            this._clickTimeoutId = 0;
+        }
+    }
+
+    _iconCoords() {
+        const [x, y] = this.get_transformed_position();
+        return [Math.round(x), Math.round(y)];
+    }
+
+    _primaryActivate() {
+        const isMenu = this._proxy?.get_cached_property('ItemIsMenu')?.deep_unpack() ?? false;
+        if (isMenu) {
+            this.menu.toggle();
+            return;
+        }
+        this._callSNIMethod('Activate', () => this.menu.toggle());
+    }
+
+    _secondaryActivate() {
+        this._callSNIMethod('SecondaryActivate', null);
+    }
+
+    _callSNIMethod(method, onError) {
+        const [x, y] = this._iconCoords();
+        Gio.DBus.session.call(
+            this._busName,
+            this._objectPath,
+            'org.kde.StatusNotifierItem',
+            method,
+            new GLib.Variant('(ii)', [x, y]),
+            null,
+            Gio.DBusCallFlags.NONE,
+            -1,
+            this._cancellable,
+            (conn, result) => {
+                try {
+                    conn.call_finish(result);
+                } catch (e) {
+                    debug(`${method} failed for ${this._busName}: ${e}`);
+                    if (onError)
+                        onError();
+                }
+            }
+        );
+    }
+
     destroy() {
         if (this._cancellable) {
             this._cancellable.cancel();
             this._cancellable = null;
         }
+
+        this._clearClickTimeout();
 
         if (this._menuOpenStateId && this.menu) {
             this.menu.disconnect(this._menuOpenStateId);
