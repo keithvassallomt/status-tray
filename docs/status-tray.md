@@ -595,6 +595,7 @@ _activateMenuItem(itemId) {
 | `icon-mode` | `s` | `'symbolic'` | `'symbolic'` or `'original'` |
 | `icon-size` | `i` | `16` | Size in pixels of tray icons shown in the top bar and the overflow button's dynamic preview; range 14-20 |
 | `icon-padding` | `i` | `4` | Gap in pixels between adjacent tray icons; applied as half this value of horizontal padding per side to each tray button and the overflow button; range 0-20 |
+| `click-action` | `s` | `'menu'` | Left-click behaviour: `'menu'` shows the app menu (default), `'activate'` opens the app window (menu on right click), `'activate-double'` opens the window on double click (menu on single click). Right click always shows the menu; middle click triggers `SecondaryActivate` |
 | `app-order` | `as` | `[]` | Custom app ordering |
 | `icon-overrides` | `a{ss}` | `{}` | App ID → icon name/path |
 | `icon-fallback-overrides` | `as` | `[]` | App IDs where override is fallback-only |
@@ -647,10 +648,11 @@ settings.connect('changed::icon-mode', () => {
 ```
 StatusTrayPreferences (Adw.PreferencesWindow)
 └── Adw.PreferencesPage ("General")
-    ├── Adw.PreferencesGroup ("Appearance")
+    ├── Adw.PreferencesGroup ("Appearance & Behaviour")
     │   ├── Icon Style (Adw.ComboRow) → icon-mode
     │   ├── Icon Size (Adw.ActionRow + Gtk.Scale) → icon-size
-    │   └── Padding between icons (Adw.ActionRow + Gtk.Scale) → icon-padding
+    │   ├── Padding between icons (Adw.ActionRow + Gtk.Scale) → icon-padding
+    │   └── Icon interaction (Adw.ComboRow) → click-action
     │
     ├── Adw.PreferencesGroup ("Panel Overflow")
     │   ├── Enable overflow icon (Adw.SwitchRow) → overflow-enabled
