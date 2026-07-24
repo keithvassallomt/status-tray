@@ -205,7 +205,6 @@ const SNI_INTERFACE_XML = `
     <property name="AttentionIconPixmap" type="a(iiay)" access="read"/>
     <property name="AttentionMovieName" type="s" access="read"/>
     <property name="ToolTip" type="(sa(iiay)ss)" access="read"/>
-    <property name="ItemIsMenu" type="b" access="read"/>
     <method name="ContextMenu">
       <arg name="x" type="i" direction="in"/>
       <arg name="y" type="i" direction="in"/>

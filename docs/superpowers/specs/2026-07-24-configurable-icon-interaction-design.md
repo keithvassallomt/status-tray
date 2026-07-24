@@ -203,14 +203,11 @@ Two fallback triggers for the primary path, both resolving to "show the menu":
 An app whose `Activate` succeeds but does nothing is indistinguishable from
 success and is the app's own bug — nothing to fall back on.
 
-### Interface XML addition
+### Interface XML
 
-`ItemIsMenu` is not currently in the embedded SNI interface XML. Add it to the
-`<interface name="org.kde.StatusNotifierItem">` block so the proxy caches it:
-
-```xml
-<property name="ItemIsMenu" type="b" access="read"/>
-```
+`ItemIsMenu` is **already** declared in the embedded SNI interface XML (right
+after the `Menu` property), so the proxy already caches it and no XML change is
+needed. `_primaryActivate` reads it directly.
 
 ## Preferences UI
 

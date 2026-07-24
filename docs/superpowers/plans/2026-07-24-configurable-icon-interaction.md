@@ -70,15 +70,13 @@ git commit -m "Add click-action GSettings key (#19)"
 - Consumes: `click-action` key from Task 1; existing `this._settings`, `this._proxy`, `this._busName`, `this._objectPath`, `this._cancellable`, `this.menu`; `Clutter`, `GLib`, `Gio` (already imported).
 - Produces: overridden `vfunc_event(event)`; helpers `_clearClickTimeout()`, `_iconCoords()`, `_callSNIMethod(method, onError)`, `_primaryActivate()`, `_secondaryActivate()`; instance field `this._clickTimeoutId`.
 
-- [ ] **Step 1: Add the `ItemIsMenu` property to the SNI interface XML**
+- [ ] **Step 1: Confirm `ItemIsMenu` is already in the SNI interface XML**
 
-In `SNI_INTERFACE_XML`, insert the property between the `ToolTip` property and the `ContextMenu` method:
-
-```xml
-    <property name="ToolTip" type="(sa(iiay)ss)" access="read"/>
-    <property name="ItemIsMenu" type="b" access="read"/>
-    <method name="ContextMenu">
-```
+`ItemIsMenu` is already declared in `SNI_INTERFACE_XML` (right after the `Menu`
+property), so the proxy already caches it. No XML change is needed — verify the
+line is present and do not add a duplicate. `_primaryActivate` (Step 3) reads
+`get_cached_property('ItemIsMenu')`, which works against the existing
+declaration.
 
 - [ ] **Step 2: Initialise the click-timer field in `_init`**
 
@@ -374,7 +372,7 @@ git commit -m "Document click-action setting (#19)"
 - Timer lifecycle (init, clear-on-fire, clear-in-destroy) → Task 2 Steps 2, 3, 4. ✓
 - `Activate`/`SecondaryActivate` async via existing idiom, coords from icon position → Task 2 Step 3. ✓
 - Fallbacks: `ItemIsMenu` up front + `Activate` error → menu; middle-click no fallback → Task 2 Step 3. ✓
-- `ItemIsMenu` interface XML addition → Task 2 Step 1. ✓
+- `ItemIsMenu` read from the (pre-existing) interface XML → Task 2 Steps 1, 3. ✓
 - Touch/keyboard fall through to menu → Task 2 Step 3 (only `BUTTON_PRESS` intercepted). ✓
 - No `changed::click-action` handler → Global Constraints; no task adds one. ✓
 - Prefs ComboRow with long-label factory + group rename → Task 3. ✓
