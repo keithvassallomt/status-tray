@@ -119,9 +119,9 @@ Choose what clicking a tray icon does:
 
 | Mode | Behaviour |
 |------|-----------|
-| **Left click to show the menu** (default) | Left or right click opens the app menu |
-| **Left click to open app, right-click to show the menu** | Left click opens the app window; right click opens the menu |
-| **Double-click to open the app, single-click to show the menu** | Double click opens the app window; single click opens the menu |
+| **Click for menu** (default) | Left or right click opens the app menu |
+| **Left click to open, Right click for menu** | Left click opens the app window; right click opens the menu |
+| **Double-click to open, Click for menu** | Double click opens the app window; a single click opens the menu after a brief delay |
 
 In every mode, right click shows the menu and middle click triggers the app's
 secondary action. Apps that don't expose a working activate action fall back to

@@ -1730,9 +1730,9 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             subtitle: 'What clicking a tray icon does',
         });
         const clickActionModel = new Gtk.StringList();
-        clickActionModel.append('Left click to show the menu (default)');
-        clickActionModel.append('Left click to open app, right-click to show the menu');
-        clickActionModel.append('Double-click to open the app, single-click to show the menu');
+        clickActionModel.append('Click for menu (default)');
+        clickActionModel.append('Left click to open, Right click for menu');
+        clickActionModel.append('Double-click to open, Click for menu');
         clickActionRow.set_model(clickActionModel);
 
         // Adw.ComboRow's default factory ellipsizes long labels; a plain
