@@ -27,6 +27,10 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const DEBUG = false;
+// Window within which a second press counts as a double click, for the
+// 'activate-double' click action. Clutter no longer exposes a click count on
+// events, so this is tracked manually.
+const DOUBLE_CLICK_INTERVAL_MS = 400;
 const FALLBACK_ICON_NAME = 'image-loading-symbolic';
 const PIXMAPS_FORMAT = Cogl.PixelFormat.ARGB_8888;
 const OVERFLOW_PREVIEW_LIMIT = 4;
@@ -328,6 +332,10 @@ function extractFlatpakAppId(iconThemePath) {
 function _applyIconPadding(button, settings) {
     const pad = settings.get_int('icon-padding') / 2;
     button.set_style(`-natural-hpadding: ${pad}px; -minimum-hpadding: ${pad}px;`);
+    // PanelMenu.ButtonBox caches -natural/-minimum-hpadding on style-change but
+    // never queues a relayout, so a live padding change isn't reflected until
+    // some other relayout happens. Force one so the gap updates immediately.
+    button.queue_relayout();
 }
 
 const TrayItem = GObject.registerClass({
@@ -367,6 +375,12 @@ const TrayItem = GObject.registerClass({
 
         this.add_style_class_name('status-tray-button');
         _applyIconPadding(this, this._settings);
+
+        // PanelMenu.Button toggles its menu from a Clutter.ClickGesture that
+        // recognises on press, independently of vfunc_event — returning
+        // EVENT_STOP can't suppress it. Disable it and drive every click from
+        // vfunc_event below so the configured action is the only behaviour.
+        this._clickGesture?.set_enabled(false);
 
         this._initProxy();
 
@@ -1785,7 +1799,7 @@ const TrayItem = GObject.registerClass({
 
     vfunc_event(event) {
         if (event.type() !== Clutter.EventType.BUTTON_PRESS)
-            return super.vfunc_event(event);
+            return Clutter.EVENT_PROPAGATE;
 
         const button = event.get_button();
 
@@ -1800,31 +1814,35 @@ const TrayItem = GObject.registerClass({
         }
 
         if (button !== Clutter.BUTTON_PRIMARY)
-            return super.vfunc_event(event);
+            return Clutter.EVENT_PROPAGATE;
 
         const mode = this._settings.get_string('click-action');
 
-        if (mode === 'menu')
-            return super.vfunc_event(event);
+        if (mode === 'menu') {
+            this.menu.toggle();
+            return Clutter.EVENT_STOP;
+        }
 
         if (mode === 'activate') {
             this._primaryActivate();
             return Clutter.EVENT_STOP;
         }
 
-        // 'activate-double': open on double click, menu on single click. The
-        // single-click menu waits out the double-click interval so a second
-        // press can cancel it.
-        if (event.get_click_count() >= 2) {
+        // 'activate-double': open on double click, menu on single click.
+        // Clutter events carry no click count here, so the pending single-click
+        // timer doubles as the "a press just happened" flag: a second press
+        // before it fires is the double click (open the app); otherwise the
+        // timer runs out and shows the menu.
+        if (this._clickTimeoutId) {
             this._clearClickTimeout();
             this._primaryActivate();
-        } else if (!this._clickTimeoutId) {
-            const delay = Clutter.Settings.get_default().double_click_time;
-            this._clickTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
-                this._clickTimeoutId = 0;
-                this.menu.toggle();
-                return GLib.SOURCE_REMOVE;
-            });
+        } else {
+            this._clickTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT,
+                DOUBLE_CLICK_INTERVAL_MS, () => {
+                    this._clickTimeoutId = 0;
+                    this.menu.toggle();
+                    return GLib.SOURCE_REMOVE;
+                });
         }
         return Clutter.EVENT_STOP;
     }
