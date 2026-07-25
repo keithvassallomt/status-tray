@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.14] - 2026-07-25
 
 ### Added
 - Icon interaction setting under Appearance & Behaviour: choose what a left click does — show the menu (default), open the app window (menu on right click), or open the app window on double click (menu on single click). Right click always shows the menu and middle click triggers the app's secondary action. Apps that expose no working activate action fall back to showing the menu. Thanks to [@zamszowy](https://github.com/zamszowy) for the request (#19).
