@@ -1494,13 +1494,6 @@ const TrayItem = GObject.registerClass({
             return;
         }
 
-        targetMenu.removeAll();
-        const loadingItem = new PopupMenu.PopupMenuItem('Loading...', {
-            reactive: false,
-            style_class: 'popup-inactive-menu-item',
-        });
-        targetMenu.addMenuItem(loadingItem);
-
         const bus = Gio.DBus.session;
 
         // IMPORTANT: Call AboutToShow first to trigger visibility updates
