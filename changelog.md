@@ -4,6 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- Menus no longer flash a "Loading..." placeholder every time they are opened. Reopening a menu previously cleared it and showed the placeholder while the `AboutToShow`/`GetLayout` D-Bus round-trip completed, causing two relayouts and visible flicker — especially on high-refresh-rate displays. The existing items now stay on screen and are swapped only once the new layout arrives. Thanks to [@adavidys](https://github.com/adavidys) for the fix (#21).
+
 ## [1.14] - 2026-07-25
 
 ### Added
