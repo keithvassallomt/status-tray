@@ -16,6 +16,7 @@ A GNOME Shell extension that brings back the system tray for applications using 
 - **Dual Icon Modes** - Choose between symbolic (monochrome) or original (colored) icons
 - **Adjustable Size & Spacing** - Set the tray icon size and the gap between icons
 - **Configurable Click Action** - Show the menu, or open the app on click or double-click
+- **Keyboard Shortcut** - Optionally open and focus the tray menu without a pointer
 - **Highly Customizable** - Per-app icon overrides, effects, and ordering
 - **Drag & Drop Reordering** - Arrange tray icons in your preferred order
 - **Panel Overflow** - Optionally collapse extra icons into a single overflow button

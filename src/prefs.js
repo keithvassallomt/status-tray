@@ -1593,6 +1593,59 @@ const IconEffectDialog = GObject.registerClass({
     }
 });
 
+const ShortcutDialog = GObject.registerClass({
+    Signals: {
+        'shortcut-selected': { param_types: [GObject.TYPE_STRING] },
+    },
+}, class ShortcutDialog extends Adw.Dialog {
+    _init() {
+        super._init({
+            title: 'Set Shortcut',
+            content_width: 400,
+            content_height: 220,
+        });
+
+        this.set_child(new Adw.StatusPage({
+            title: 'Press a key combination',
+            description: 'Press Esc to cancel, or Backspace to remove the shortcut.',
+        }));
+
+        // Capture phase, so the dialog sees the key before any focused widget
+        // consumes it.
+        const controller = new Gtk.EventControllerKey();
+        controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);
+        controller.connect('key-pressed', (_controller, keyval, _keycode, state) =>
+            this._onKeyPressed(keyval, state));
+        this.add_controller(controller);
+    }
+
+    _onKeyPressed(keyval, state) {
+        const mods = state & Gtk.accelerator_get_default_mod_mask();
+
+        if (keyval === Gdk.KEY_Escape && mods === 0) {
+            this.close();
+            return Gdk.EVENT_STOP;
+        }
+
+        if (keyval === Gdk.KEY_BackSpace && mods === 0) {
+            this.emit('shortcut-selected', '');
+            this.close();
+            return Gdk.EVENT_STOP;
+        }
+
+        // Modifier-only presses and unusable combinations land here; swallow
+        // them and keep waiting rather than closing on a half-typed shortcut.
+        // accelerator_valid accepts an unmodified letter, which once bound
+        // would swallow that key desktop-wide, so a modifier is required too.
+        if (mods === 0 || !Gtk.accelerator_valid(keyval, mods))
+            return Gdk.EVENT_STOP;
+
+        this.emit('shortcut-selected', Gtk.accelerator_name(keyval, mods));
+        this.close();
+        return Gdk.EVENT_STOP;
+    }
+});
+
 export default class StatusTrayPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         this._window = window;
@@ -1756,6 +1809,35 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             this._settings.set_string('click-action', clickActionValues[selected] ?? 'menu');
         });
         appearanceGroup.add(clickActionRow);
+
+        // GTK offers no way to detect a clash with a system or third-party
+        // shortcut, so the subtitle says so rather than pretending to check.
+        const shortcutRow = new Adw.ActionRow({
+            title: 'Open Menu Shortcut',
+            subtitle: 'Opens the leftmost tray menu and focuses it. Left and Right move between menus. Not checked against shortcuts used elsewhere.',
+            activatable: true,
+        });
+
+        const shortcutLabel = new Gtk.ShortcutLabel({
+            disabled_text: 'Disabled',
+            valign: Gtk.Align.CENTER,
+        });
+        shortcutRow.add_suffix(shortcutLabel);
+
+        const syncShortcutLabel = () => {
+            shortcutLabel.accelerator = this._settings.get_strv('toggle-menu')[0] ?? '';
+        };
+        syncShortcutLabel();
+
+        shortcutRow.connect('activated', () => {
+            const dialog = new ShortcutDialog();
+            dialog.connect('shortcut-selected', (_dialog, accel) => {
+                this._settings.set_strv('toggle-menu', accel ? [accel] : []);
+                syncShortcutLabel();
+            });
+            dialog.present(this._window);
+        });
+        appearanceGroup.add(shortcutRow);
 
         const overflowGroup = new Adw.PreferencesGroup({
             title: 'Panel Overflow',

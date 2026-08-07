@@ -19,6 +19,8 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
+import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -391,11 +393,14 @@ const TrayItem = GObject.registerClass({
         });
         this.menu.addMenuItem(this._loadingItem);
 
+        this._focusOnOpen = false;
+
         this._menuOpenStateId = this.menu.connect('open-state-changed', (menu, isOpen) => {
             debug(`Menu open-state-changed: isOpen=${isOpen}, busName=${this._busName}`);
-            if (isOpen) {
+            if (isOpen)
                 this._loadMenu();
-            }
+            else
+                this._focusOnOpen = false;
         });
 
         debug(`Created TrayItem for ${busName} at ${objectPath}`);
@@ -1549,6 +1554,10 @@ const TrayItem = GObject.registerClass({
                     debug(`Got menu layout, revision ${revision}`);
                     targetMenu.removeAll();
                     this._buildMenuFromLayout(layout, targetMenu);
+                    if (this._focusOnOpen && targetMenu === this.menu) {
+                        this._focusOnOpen = false;
+                        this.menu.actor.navigate_focus(null, St.DirectionType.TAB_FORWARD, false);
+                    }
                 } catch (e) {
                     debug(`Failed to get menu layout: ${e}`);
                 }
@@ -1845,6 +1854,17 @@ const TrayItem = GObject.registerClass({
             GLib.source_remove(this._clickTimeoutId);
             this._clickTimeoutId = 0;
         }
+    }
+
+    toggleMenuWithKeyFocus() {
+        // The DBusMenu round-trip in _loadMenu replaces every item, destroying
+        // whatever is focused here; _fetchMenuLayout focuses again once the
+        // real layout arrives. Focusing now still matters: it puts focus on the
+        // placeholder so Escape and Left/Right work during the round-trip.
+        this._focusOnOpen = !this.menu.isOpen;
+        this.menu.toggle();
+        if (this.menu.isOpen)
+            this.menu.actor.navigate_focus(null, St.DirectionType.TAB_FORWARD, false);
     }
 
     _iconCoords() {
@@ -2187,6 +2207,14 @@ class OverflowButton extends PanelMenu.Button {
         }
 
         this.updateOverflowIcon();
+    }
+
+    toggleMenuWithKeyFocus() {
+        // No re-focus flag as on TrayItem: setOverflowedItems populates these
+        // rows synchronously, so they already exist when the menu opens.
+        this.menu.toggle();
+        if (this.menu.isOpen)
+            this.menu.actor.navigate_focus(null, St.DirectionType.TAB_FORWARD, false);
     }
 
     _seedPlaceholder(menu) {
@@ -2846,6 +2874,16 @@ export default class StatusTrayExtension extends Extension {
             this
         );
 
+        // POPUP is required for the toggle to close the menu again: without it
+        // the shortcut is swallowed while a popup menu holds the grab.
+        Main.wm.addKeybinding(
+            'toggle-menu',
+            this._settings,
+            Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
+            Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW | Shell.ActionMode.POPUP,
+            () => this._keyboardTarget()?.toggleMenuWithKeyFocus()
+        );
+
         this._watcher = new StatusNotifierWatcher(this);
 
         // Kick off async theme-chain precompute so icon lookups use the full
@@ -2864,6 +2902,8 @@ export default class StatusTrayExtension extends Extension {
 
     disable() {
         debug('Extension disabling...');
+
+        Main.wm.removeKeybinding('toggle-menu');
 
         if (this._watcher) {
             this._watcher.destroy();
@@ -3073,6 +3113,21 @@ export default class StatusTrayExtension extends Extension {
         }
         // Fallback to bus name portion
         return slashIndex > 0 ? key.substring(0, slashIndex) : key;
+    }
+
+    _keyboardTarget() {
+        // _items is kept in panel order by _reorderItems, so the first match is
+        // the leftmost icon. With overflow-inline-count at 0 every item is
+        // hidden and the loop falls through to the overflow button, which is
+        // then the only visible tray element.
+        for (const trayItem of this._items.values()) {
+            if (trayItem._isPassive)
+                continue;
+            const container = trayItem.container || trayItem;
+            if (container.visible)
+                return trayItem;
+        }
+        return this._overflowButton;
     }
 
     /**

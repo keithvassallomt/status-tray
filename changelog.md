@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Open Menu Shortcut setting under Appearance & Behaviour: an optional keyboard shortcut that opens the leftmost tray icon's menu and moves key focus into it, so the tray is reachable without a pointer. Left and Right then move between the open tray menus, and pressing the shortcut again closes the menu. When every icon is collapsed into the overflow button, the shortcut opens that instead. No shortcut is bound by default, the combination must include a modifier, and clashes with shortcuts used elsewhere are not detected. Thanks to [@weierophinney](https://github.com/weierophinney) for the request (#22).
+
 ### Fixed
 - Menus no longer flash a "Loading..." placeholder every time they are opened. Reopening a menu previously cleared it and showed the placeholder while the `AboutToShow`/`GetLayout` D-Bus round-trip completed, causing two relayouts and visible flicker — especially on high-refresh-rate displays. The existing items now stay on screen and are swapped only once the new layout arrives. Thanks to [@adavidys](https://github.com/adavidys) for the fix (#21).
 

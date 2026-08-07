@@ -257,11 +257,12 @@ Main extension controller. Extends `Extension.Extension`.
 
 | Method | Description |
 |--------|-------------|
-| `enable()` | Start watcher, load settings, create items |
-| `disable()` | Destroy all items and the overflow button, stop watcher |
+| `enable()` | Start watcher, load settings, create items, register the `toggle-menu` keybinding |
+| `disable()` | Remove the keybinding, destroy all items and the overflow button, stop watcher |
 | `_refreshItems()` | Recreate items (after settings change) |
 | `_reorderItems()` | Update panel positions based on app-order |
 | `_applyOverflow()` | Show/hide inline items and (re)build the overflow button |
+| `_keyboardTarget()` | Leftmost visible non-passive item, or the overflow button, for the `toggle-menu` shortcut |
 
 #### Settings Handlers
 
@@ -596,6 +597,7 @@ _activateMenuItem(itemId) {
 | `icon-size` | `i` | `16` | Size in pixels of tray icons shown in the top bar and the overflow button's dynamic preview; range 14-20 |
 | `icon-padding` | `i` | `4` | Gap in pixels between adjacent tray icons; applied as half this value of horizontal padding per side to each tray button and the overflow button; range 0-20 |
 | `click-action` | `s` | `'menu'` | Left-click behaviour: `'menu'` shows the app menu (default), `'activate'` opens the app window (menu on right click), `'activate-double'` opens the window on double click (menu on single click). Right click always shows the menu; middle click triggers `SecondaryActivate` |
+| `toggle-menu` | `as` | `[]` | Keyboard shortcut that opens the leftmost visible tray menu and focuses it, falling back to the overflow button when every item is overflowed; empty means unbound |
 | `app-order` | `as` | `[]` | Custom app ordering |
 | `icon-overrides` | `a{ss}` | `{}` | App ID → icon name/path |
 | `icon-fallback-overrides` | `as` | `[]` | App IDs where override is fallback-only |

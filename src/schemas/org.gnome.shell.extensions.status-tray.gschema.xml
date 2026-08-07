@@ -39,6 +39,12 @@
       <description>What a left click on a tray icon does. 'menu' shows the app menu (default). 'activate' opens the app window on left click and shows the menu on right click. 'activate-double' opens the app window on double click and shows the menu on single click. Right click always shows the menu; middle click always triggers the app's secondary action.</description>
     </key>
 
+    <key name="toggle-menu" type="as">
+      <default>[]</default>
+      <summary>Shortcut to open the tray menu</summary>
+      <description>Keyboard shortcut that opens the leftmost tray icon's menu and moves key focus into it, so the tray can be reached without a pointer. Left and Right then move between the open menus. An empty list means no shortcut is bound.</description>
+    </key>
+
     <key name="app-order" type="as">
       <default>[]</default>
       <summary>App order</summary>
