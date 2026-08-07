@@ -54,6 +54,7 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 # shellcheck disable=SC1091
 . "$VENV_DIR/bin/activate"
-pip install -q -U shexli
+# tree-sitter is capped for the reason documented in validate.sh.
+pip install -q -U shexli "tree-sitter<0.26"
 shexli "$OUTPUT_FILE"
 deactivate

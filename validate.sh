@@ -40,7 +40,12 @@ fi
 
 # shellcheck disable=SC1091
 . "$VENV_DIR/bin/activate"
-pip install -q -U shexli
+
+# tree-sitter 0.26.0 regressed Node lifetime: a Node no longer keeps its Tree
+# alive, so shexli's `parse_js(text).root_node` frees the tree it is walking and
+# segfaults partway through analysing extension.js. shexli asks only for
+# >=0.25.0, so cap it here until upstream handles 0.26.
+pip install -q -U shexli "tree-sitter<0.26"
 
 # install.sh compiles schemas in place, leaving src/schemas/gschemas.compiled
 # behind. It's a build artifact (gitignored, excluded from the EGO zip), but
