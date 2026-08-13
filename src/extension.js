@@ -1133,10 +1133,7 @@ const TrayItem = GObject.registerClass({
             this._applySymbolicStyle();
         } else {
             // Manual walk missed it — ask St.IconTheme to resolve via the
-            // full FDO engine, then route through the gicon path. The bare
-            // set_icon_name fall-through has been observed to allocate the
-            // panel slot but render no glyph (icon-mode='original'), so we
-            // only use it as a true last resort.
+            // full FDO engine, then route through the gicon path.
             debug(`Using GTK icon resolution for: ${iconName}`);
 
             let resolvedFile = null;
@@ -1156,9 +1153,11 @@ const TrayItem = GObject.registerClass({
                 return;
             }
 
-            this._icon.set_icon_name(iconName);
-            this._clearIconExcept('icon_name');
-            this._applySymbolicStyle();
+            // A non-empty IconName is not necessarily resolvable in the host
+            // icon theme. Prefer the app-provided pixmap in that case instead
+            // of leaving an allocated but blank panel slot.
+            debug(`Icon not found in theme, trying IconPixmap: ${iconName}`);
+            this._fetchIconPixmapWithFallback(iconName);
         }
     }
 
