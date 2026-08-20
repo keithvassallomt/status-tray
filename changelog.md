@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.16] - 2026-08-20
 
 ### Fixed
 - Tray icons no longer show a blank panel slot when an app advertises an `IconName` that isn't present in the host icon theme. Telegram Desktop (`org.telegram.desktop-symbolic`) and Flameshot both do this while supplying a perfectly good `IconPixmap`; the icon name was passed to `set_icon_name` anyway, which claimed the slot and drew nothing. Unresolvable names now fall back to the app's own pixmap, and only drop back to `set_icon_name` if there is no usable pixmap either. Thanks to [@michaelbrylevskii](https://github.com/michaelbrylevskii) for the fix (#23).
