@@ -369,6 +369,11 @@ const TrayItem = GObject.registerClass({
         this._fallbackOverrideIcon = null;
         this._isPassive = false;
 
+        // Bumped whenever an icon refresh starts.  Async icon fetches capture
+        // it and drop their reply if a newer refresh has begun since, so a
+        // late answer can't overwrite the current icon.
+        this._iconSerial = 0;
+
         this._icon = new St.Icon({
             style_class: 'system-status-icon status-tray-icon',
             icon_name: FALLBACK_ICON_NAME,
@@ -619,6 +624,7 @@ const TrayItem = GObject.registerClass({
     _updateIcon() {
         debug(`_updateIcon called for ${this._busName}`);
 
+        this._iconSerial++;
         this._usingOverrideIcon = false;
         this._fallbackOverrideIcon = null;
         if (this._settings) {
@@ -695,6 +701,7 @@ const TrayItem = GObject.registerClass({
     }
 
     _fetchIconDirect() {
+        this._iconSerial++;
         const bus = Gio.DBus.session;
 
         bus.call(
@@ -749,10 +756,10 @@ const TrayItem = GObject.registerClass({
 
                     if (iconName && iconName.length > 0) {
                         debug(`Got IconName (direct): ${iconName}`);
-                        this._setIcon(iconName);
+                        this._setIcon(iconName, false);
                     } else if (this._fallbackOverrideIcon) {
                         debug(`No IconName (direct), using fallback override for ${this._appId}`);
-                        this._setIcon(this._fallbackOverrideIcon);
+                        this._setIcon(this._fallbackOverrideIcon, false);
                     } else {
                         debug(`IconName is empty for ${this._busName}, trying IconPixmap`);
                         this._fetchIconPixmapDirect();
@@ -762,7 +769,7 @@ const TrayItem = GObject.registerClass({
                         debug(`Failed to get IconName: ${e}`);
                     }
                     if (this._fallbackOverrideIcon) {
-                        this._setIcon(this._fallbackOverrideIcon);
+                        this._setIcon(this._fallbackOverrideIcon, false);
                     } else {
                         this._fetchIconPixmapDirect();
                     }
@@ -798,7 +805,27 @@ const TrayItem = GObject.registerClass({
         );
     }
 
-    _fetchIconPixmapWithFallback(iconName) {
+    // Render the app-supplied IconPixmap, falling back to iconName if there
+    // is no usable one.  skipThemeSearch says findIconInTheme has already
+    // missed on this name; allowCachedPixmap is cleared by the direct-fetch
+    // path, where the proxy's cache is the thing being distrusted.
+    _fetchIconPixmapWithFallback(iconName, skipThemeSearch = false, allowCachedPixmap = true) {
+        // Prefer the proxy's cached IconPixmap: the D-Bus round-trip below
+        // lands a frame or more later and leaves the panel slot blank until
+        // it does, which is the flicker the NewIcon handler already avoids.
+        const cached = allowCachedPixmap && this._proxy
+            ? this._proxy.get_cached_property('IconPixmap')
+            : null;
+        if (cached && cached.n_children() > 0) {
+            debug(`Using cached IconPixmap for: ${iconName}`);
+            if (this._setIconFromPixmap(cached))
+                return;
+            debug(`Cached IconPixmap unusable, falling back for: ${iconName}`);
+            this._setIconFromThemeFile(iconName, skipThemeSearch);
+            return;
+        }
+
+        const serial = this._iconSerial;
         const bus = Gio.DBus.session;
 
         bus.call(
@@ -812,23 +839,28 @@ const TrayItem = GObject.registerClass({
             -1,
             this._cancellable,
             (conn, result) => {
+                // A newer icon refresh started while this was in flight (a
+                // NewIcon signal, or the user applying an override) — its
+                // result is the current one, so drop this reply.
+                if (this._iconSerial !== serial) {
+                    debug(`Discarding stale IconPixmap reply for: ${iconName}`);
+                    return;
+                }
+
                 try {
                     const reply = conn.call_finish(result);
                     const [variant] = reply.deep_unpack();
-                    const pixmaps = variant.deep_unpack();
 
-                    if (pixmaps && pixmaps.length > 0) {
-                        debug(`Got IconPixmap for sandboxed app`);
-                        this._setIconFromPixmap(variant);
-                    } else {
-                        debug(`No IconPixmap available, falling back for: ${iconName}`);
-                        this._setIconFromThemeFile(iconName);
-                    }
+                    if (this._setIconFromPixmap(variant))
+                        return;
+
+                    debug(`No usable IconPixmap, falling back for: ${iconName}`);
+                    this._setIconFromThemeFile(iconName, skipThemeSearch);
                 } catch (e) {
                     if (!e.message?.includes('CANCELLED')) {
-                        debug(`IconPixmap failed for sandboxed app: ${e.message}`);
+                        debug(`IconPixmap fetch failed: ${e.message}`);
                         debug(`Falling back for: ${iconName}`);
-                        this._setIconFromThemeFile(iconName);
+                        this._setIconFromThemeFile(iconName, skipThemeSearch);
                     }
                 }
             }
@@ -1068,7 +1100,9 @@ const TrayItem = GObject.registerClass({
         this.emit('passive-changed');
     }
 
-    _setIcon(iconName) {
+    // allowCachedPixmap is cleared by callers that reached us after a NewIcon
+    // signal, where the proxy's property cache may still hold the old icon.
+    _setIcon(iconName, allowCachedPixmap = true) {
         debug(`_setIcon called with: ${iconName}, themePath: ${this._iconThemePath}`);
 
         if (iconName.startsWith('/')) {
@@ -1120,7 +1154,7 @@ const TrayItem = GObject.registerClass({
             }
 
             debug(`IconThemePath inaccessible (possibly sandboxed), trying IconPixmap`);
-            this._fetchIconPixmapWithFallback(iconName);
+            this._fetchIconPixmapWithFallback(iconName, false, allowCachedPixmap);
             return;
         }
 
@@ -1155,9 +1189,10 @@ const TrayItem = GObject.registerClass({
 
             // A non-empty IconName is not necessarily resolvable in the host
             // icon theme. Prefer the app-provided pixmap in that case instead
-            // of leaving an allocated but blank panel slot.
+            // of leaving an allocated but blank panel slot.  findIconInTheme
+            // has already missed here, so the fallback must not repeat it.
             debug(`Icon not found in theme, trying IconPixmap: ${iconName}`);
-            this._fetchIconPixmapWithFallback(iconName);
+            this._fetchIconPixmapWithFallback(iconName, true, allowCachedPixmap);
         }
     }
 
@@ -1199,15 +1234,20 @@ const TrayItem = GObject.registerClass({
 
     // Last-resort icon setter: tries to load the icon file directly from
     // the theme directory, bypassing the GTK icon theme engine.  Falls back
-    // to set_icon_name() if the file isn't found on disk.
-    _setIconFromThemeFile(iconName) {
-        const iconPath = findIconInTheme(iconName);
+    // to set_icon_name() if the file isn't found on disk.  Callers that have
+    // already run findIconInTheme on this name pass skipThemeSearch to avoid
+    // repeating a search that is certain to miss.
+    _setIconFromThemeFile(iconName, skipThemeSearch = false) {
+        const iconPath = skipThemeSearch ? null : findIconInTheme(iconName);
         if (iconPath) {
             debug(`Fallback: using icon file from theme: ${iconPath}`);
             const file = Gio.File.new_for_path(iconPath);
             this._icon.set_gicon(new Gio.FileIcon({ file }));
             this._clearIconExcept('gicon');
         } else {
+            // True last resort: a bare set_icon_name has been observed to
+            // allocate the panel slot but render no glyph (icon-mode
+            // 'original'), so we only reach it once everything else has failed.
             debug(`Fallback: icon ${iconName} not found on disk, using icon_name`);
             this._icon.set_icon_name(iconName);
             this._clearIconExcept('icon_name');
@@ -1325,6 +1365,8 @@ const TrayItem = GObject.registerClass({
         this._applySymbolicStyle();
     }
 
+    // Returns whether an icon was actually rendered — fallback callers need
+    // to know, so they can try something else rather than leave a blank slot.
     _setIconFromPixmap(pixmapVariant) {
         try {
             let pixmaps;
@@ -1332,7 +1374,7 @@ const TrayItem = GObject.registerClass({
                 const numChildren = pixmapVariant.n_children();
                 if (numChildren === 0) {
                     debug(`Empty IconPixmap for ${this._busName}`);
-                    return;
+                    return false;
                 }
 
                 pixmaps = [];
@@ -1347,7 +1389,7 @@ const TrayItem = GObject.registerClass({
                 pixmaps = pixmapVariant;
                 if (!pixmaps || pixmaps.length === 0) {
                     debug(`No IconPixmap data for ${this._busName}`);
-                    return;
+                    return false;
                 }
             }
 
@@ -1422,7 +1464,7 @@ const TrayItem = GObject.registerClass({
 
                 this._applySymbolicStyle();
                 debug(`Set IconPixmap via St.ImageContent for ${this._busName}`);
-                return;
+                return true;
 
             } catch (stError) {
                 debug(`St.ImageContent failed, falling back to temp file: ${stError.message}`);
@@ -1461,9 +1503,11 @@ const TrayItem = GObject.registerClass({
             this._applySymbolicStyle();
 
             debug(`IconPixmap saved to ${tempPath} (fallback)`);
+            return true;
 
         } catch (e) {
             debug(`Failed to set IconPixmap: ${e.message}`);
+            return false;
         }
     }
 
