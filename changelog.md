@@ -10,7 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Tray icons no longer show a blank panel slot when an app advertises an `IconName` that isn't present in the host icon theme. Telegram Desktop (`org.telegram.desktop-symbolic`) and Flameshot both do this while supplying a perfectly good `IconPixmap`; the icon name was passed to `set_icon_name` anyway, which claimed the slot and drew nothing. Unresolvable names now fall back to the app's own pixmap, and only drop back to `set_icon_name` if there is no usable pixmap either. Thanks to [@michaelbrylevskii](https://github.com/michaelbrylevskii) for the fix (#23).
   - Note: a few icon names that our lookup misses would still have rendered through `set_icon_name` via theme inheritance or a symbolic variant. Those now show the app's bitmap instead, so with Icon Style set to Symbolic they appear as a desaturated bitmap rather than a themed glyph. Setting a per-app icon override restores a themed icon.
 
-## [1.5] - 2026-08-07
+## [1.15] - 2026-08-07
 
 ### Added
 - Open Menu Shortcut setting under Appearance & Behaviour: an optional keyboard shortcut that opens the leftmost tray icon's menu and moves key focus into it, so the tray is reachable without a pointer. Left and Right then move between the open tray menus, and pressing the shortcut again closes the menu. When every icon is collapsed into the overflow button, the shortcut opens that instead. No shortcut is bound by default, the combination must include a modifier, and clashes with shortcuts used elsewhere are not detected. Thanks to [@weierophinney](https://github.com/weierophinney) for the request (#22).
