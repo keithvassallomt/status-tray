@@ -4,6 +4,12 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.17] - 2026-08-28
+
+### Fixed
+- Per-app icon overrides no longer get dropped the next time the app changes its own icon. The `NewIcon` handler refetched the app's icon straight from D-Bus without re-checking the override, so any app that swaps icons at runtime — Dropbox does it on every sync state change — reverted to its own icon within seconds of the override being applied. Overrides are now re-checked on that path (and applied when the app ID resolves late on the no-proxy fallback path, where they previously never applied at all). Thanks to [@neuromante](https://github.com/neuromante) for the report (#24).
+- Icons supplied through an app's own `IconThemePath` are now found wherever they live in that directory. The search only covered the theme root and `hicolor/{22x22,24x24,32x32}/apps/`, so apps that ship their icons under another category or size — Dropbox uses `hicolor/16x16/status/` — fell through to the pixmap fallback and, with no `IconPixmap` on offer, left a blank panel slot. The same size/category matrix as the host icon theme search is now used (#24).
+
 ## [1.16] - 2026-08-20
 
 ### Fixed

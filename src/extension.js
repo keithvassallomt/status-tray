@@ -134,6 +134,60 @@ function _getThemeChain(themeName) {
     return themeName === 'hicolor' ? ['hicolor'] : [themeName, 'hicolor'];
 }
 
+// The size/category subdirectories of an FDO icon theme, most specific
+// first. Shared by the host-theme search and the app-supplied
+// IconThemePath search so both cover the same ground.
+function _iconThemeSubdirs() {
+    const categories = [
+        'apps', 'applications',
+        'status',
+        'devices',
+        'actions',
+        'places',
+        'mimetypes',
+        'emotes',
+        'categories',
+        'emblems',
+        'ui',
+        'legacy',
+    ];
+    const subdirs = [];
+    for (const cat of categories) {
+        subdirs.push(`scalable/${cat}`);
+        subdirs.push(`symbolic/${cat}`);
+        for (const sz of ['48x48', '32x32', '24x24', '22x22', '16x16'])
+            subdirs.push(`${sz}/${cat}`);
+    }
+    return subdirs;
+}
+
+// Search an app-supplied IconThemePath for `iconName`. Apps point this at
+// anything from a flat directory of PNGs to the root of a full theme tree,
+// and their icons are not necessarily under `apps` — Dropbox ships its
+// status icons as hicolor/16x16/status/dropboxstatus-*.png — so cover the
+// same category/size matrix the host-theme search uses.
+function findIconInThemePath(themePath, iconName) {
+    if (!themePath || themePath.length === 0)
+        return null;
+
+    const exts = ['.png', '.svg'];
+    const prefixes = [''];
+    for (const subdir of _iconThemeSubdirs()) {
+        prefixes.push(`${subdir}/`);
+        prefixes.push(`hicolor/${subdir}/`);
+    }
+
+    for (const prefix of prefixes) {
+        for (const ext of exts) {
+            const path = `${themePath}/${prefix}${iconName}${ext}`;
+            if (GLib.file_test(path, GLib.FileTest.EXISTS))
+                return path;
+        }
+    }
+
+    return null;
+}
+
 function findIconInTheme(iconName) {
     try {
         const themeName = St.Settings.get().gtk_icon_theme;
@@ -144,26 +198,7 @@ function findIconInTheme(iconName) {
         iconDirs.push(`${GLib.get_home_dir()}/.local/share/icons`);
 
         const themes = _getThemeChain(themeName);
-        const categories = [
-            'apps', 'applications',
-            'status',
-            'devices',
-            'actions',
-            'places',
-            'mimetypes',
-            'emotes',
-            'categories',
-            'emblems',
-            'ui',
-            'legacy',
-        ];
-        const subdirs = [];
-        for (const cat of categories) {
-            subdirs.push(`scalable/${cat}`);
-            subdirs.push(`symbolic/${cat}`);
-            for (const sz of ['48x48', '32x32', '24x24', '22x22', '16x16'])
-                subdirs.push(`${sz}/${cat}`);
-        }
+        const subdirs = _iconThemeSubdirs();
         const exts = ['.svg', '.png'];
         // Also try the -symbolic variant as a fallback for standard icon names
         const names = [iconName];
@@ -621,39 +656,56 @@ const TrayItem = GObject.registerClass({
         }
     }
 
+    // Re-read the user's icon override for the current appId. Returns the
+    // icon to apply outright, or null when there is none or it is marked
+    // fallback-only — in which case _fallbackOverrideIcon holds it for the
+    // paths that run out of app-supplied icons.
+    _refreshOverrideState() {
+        this._fallbackOverrideIcon = null;
+
+        if (!this._settings)
+            return null;
+
+        try {
+            const overrides = this._settings.get_value('icon-overrides').deep_unpack();
+            const overrideIcon = overrides[this._appId];
+            if (!overrideIcon)
+                return null;
+
+            let isFallbackOnly = false;
+            try {
+                const fallbackApps = this._settings.get_strv('icon-fallback-overrides');
+                isFallbackOnly = fallbackApps.includes(this._appId);
+            } catch (e) {
+                // Key may not exist in older schema versions
+            }
+
+            if (isFallbackOnly) {
+                this._fallbackOverrideIcon = overrideIcon;
+                debug(`Fallback override stored for ${this._appId}: ${overrideIcon}`);
+                return null;
+            }
+
+            return overrideIcon;
+        } catch (e) {
+            debug(`Failed to check icon overrides: ${e.message}`);
+            return null;
+        }
+    }
+
     _updateIcon() {
         debug(`_updateIcon called for ${this._busName}`);
 
         this._iconSerial++;
         this._usingOverrideIcon = false;
-        this._fallbackOverrideIcon = null;
-        if (this._settings) {
-            try {
-                const overrides = this._settings.get_value('icon-overrides').deep_unpack();
-                if (overrides[this._appId]) {
-                    const overrideIcon = overrides[this._appId];
-                    let isFallbackOnly = false;
-                    try {
-                        const fallbackApps = this._settings.get_strv('icon-fallback-overrides');
-                        isFallbackOnly = fallbackApps.includes(this._appId);
-                    } catch (e) {
-                        // Key may not exist in older schema versions
-                    }
 
-                    if (isFallbackOnly) {
-                        this._fallbackOverrideIcon = overrideIcon;
-                        debug(`Fallback override stored for ${this._appId}: ${overrideIcon}`);
-                    } else {
-                        debug(`Using icon override for ${this._appId}: ${overrideIcon}`);
-                        this._usingOverrideIcon = true;
-                        this._replaceIcon(overrideIcon);
-                        this._applySymbolicStyle();
-                        return;
-                    }
-                }
-            } catch (e) {
-                debug(`Failed to check icon overrides: ${e.message}`);
-            }
+        const overrideIcon = this._refreshOverrideState();
+        if (overrideIcon) {
+            debug(`Using icon override for ${this._appId}: ${overrideIcon}`);
+            this._usingOverrideIcon = true;
+            this._replaceIcon(overrideIcon);
+            this._applySymbolicStyle();
+            return;
         }
 
         if (!this._proxy) {
@@ -701,6 +753,23 @@ const TrayItem = GObject.registerClass({
     }
 
     _fetchIconDirect() {
+        // Reached from the NewIcon signal as well as from initial setup. A
+        // user-set override outranks whatever the app just published, so
+        // re-apply it here instead of refetching the app's own icon — going
+        // on would silently drop the override on every icon change the app
+        // makes (issue #24). Also refreshes _fallbackOverrideIcon for the
+        // fetch paths below.
+        const overrideIcon = this._refreshOverrideState();
+        if (overrideIcon) {
+            if (!this._usingOverrideIcon) {
+                debug(`Override active for ${this._appId}, skipping direct icon fetch`);
+                this._updateIcon();
+            } else {
+                debug(`Override already applied for ${this._appId}, ignoring icon change`);
+            }
+            return;
+        }
+
         this._iconSerial++;
         const bus = Gio.DBus.session;
 
@@ -940,6 +1009,16 @@ const TrayItem = GObject.registerClass({
         this._subscribeToSignals();
     }
 
+    // The no-proxy fallback path resolves the appId only after the icon
+    // fetch has already started, so an override keyed on the real appId was
+    // never applied. Re-run the icon update once the appId is known — but
+    // only when there is an override to apply, so we don't bump the icon
+    // serial and discard an in-flight pixmap reply for no reason.
+    _applyOverrideForResolvedAppId() {
+        if (this._refreshOverrideState())
+            this._updateIcon();
+    }
+
     _fetchIdDirect() {
         const bus = Gio.DBus.session;
 
@@ -965,6 +1044,7 @@ const TrayItem = GObject.registerClass({
                         this._appId = normalizeToolTipId(toolTip[2]);
                         debug(`Updated appId from ${oldAppId} to ${this._appId} (from ToolTip, fallback)`);
                         this.emit('appid-resolved', this._appId);
+                        this._applyOverrideForResolvedAppId();
                         return; // ToolTip found, no need to try other sources
                     }
                 } catch (e) {
@@ -1004,6 +1084,7 @@ const TrayItem = GObject.registerClass({
                             this._appId = flatpakId;
                             debug(`Updated appId from ${oldAppId} to ${this._appId} (from Flatpak path, fallback)`);
                             this.emit('appid-resolved', this._appId);
+                            this._applyOverrideForResolvedAppId();
                             return;
                         }
                     }
@@ -1041,6 +1122,7 @@ const TrayItem = GObject.registerClass({
                         this._appId = sniId;
                         debug(`Updated appId from ${oldAppId} to ${this._appId} (from SNI Id, fallback)`);
                         this.emit('appid-resolved', this._appId);
+                        this._applyOverrideForResolvedAppId();
                     }
                 } catch (e) {
                     if (!e.message?.includes('CANCELLED')) {
@@ -1120,24 +1202,14 @@ const TrayItem = GObject.registerClass({
         }
 
         if (this._iconThemePath && this._iconThemePath.length > 0) {
-            const possiblePaths = [
-                `${this._iconThemePath}/${iconName}.png`,
-                `${this._iconThemePath}/${iconName}.svg`,
-                `${this._iconThemePath}/hicolor/22x22/apps/${iconName}.png`,
-                `${this._iconThemePath}/hicolor/24x24/apps/${iconName}.png`,
-                `${this._iconThemePath}/hicolor/32x32/apps/${iconName}.png`,
-            ];
-
-            for (const path of possiblePaths) {
-                const file = Gio.File.new_for_path(path);
-                if (file.query_exists(null)) {
-                    debug(`Found icon file at: ${path}`);
-                    const gicon = new Gio.FileIcon({ file });
-                    this._icon.set_gicon(gicon);
-                    this._clearIconExcept('gicon');
-                    this._applySymbolicStyle();
-                    return;
-                }
+            const themePathIcon = findIconInThemePath(this._iconThemePath, iconName);
+            if (themePathIcon) {
+                debug(`Found icon file at: ${themePathIcon}`);
+                const file = Gio.File.new_for_path(themePathIcon);
+                this._icon.set_gicon(new Gio.FileIcon({ file }));
+                this._clearIconExcept('gicon');
+                this._applySymbolicStyle();
+                return;
             }
             debug(`No icon file found in IconThemePath: ${this._iconThemePath}`);
 
