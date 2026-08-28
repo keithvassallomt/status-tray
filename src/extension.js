@@ -163,9 +163,10 @@ function _iconThemeSubdirs() {
 
 // Search an app-supplied IconThemePath for `iconName`. Apps point this at
 // anything from a flat directory of PNGs to the root of a full theme tree,
-// and their icons are not necessarily under `apps` — Dropbox ships its
-// status icons as hicolor/16x16/status/dropboxstatus-*.png — so cover the
-// same category/size matrix the host-theme search uses.
+// and their icons are not always under `apps` — Dropbox files its sync
+// status icons elsewhere in the tree — so cover the same category/size
+// matrix the host-theme search uses. A complete miss costs well under a
+// millisecond and only runs when an icon changes.
 function findIconInThemePath(themePath, iconName) {
     if (!themePath || themePath.length === 0)
         return null;
@@ -755,10 +756,10 @@ const TrayItem = GObject.registerClass({
     _fetchIconDirect() {
         // Reached from the NewIcon signal as well as from initial setup. A
         // user-set override outranks whatever the app just published, so
-        // re-apply it here instead of refetching the app's own icon — going
-        // on would silently drop the override on every icon change the app
-        // makes (issue #24). Also refreshes _fallbackOverrideIcon for the
-        // fetch paths below.
+        // re-apply it here rather than refetching the app's own icon —
+        // otherwise the override is dropped every time the app changes its
+        // icon, which Dropbox does on each sync state change. Also refreshes
+        // _fallbackOverrideIcon for the fetch paths below.
         const overrideIcon = this._refreshOverrideState();
         if (overrideIcon) {
             if (!this._usingOverrideIcon) {
