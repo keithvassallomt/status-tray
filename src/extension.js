@@ -3350,6 +3350,19 @@ export default class StatusTrayExtension extends Extension {
         const entries = [...this._items.values()].filter(t => !t._isPassive);
         const rightBox = Main.panel._rightBox;
 
+        // Anchoring the button is NOT the same accounting as the filter above.
+        // _reorderItems hands a panel slot to every managed item, passive ones
+        // included, so `entries.length` lands the button to the left of real
+        // icons as soon as one passive item exists. Anchor just past the last
+        // managed container actually in the box instead.
+        const slotAfterManagedItems = () => {
+            const children = rightBox.get_children();
+            let last = -1;
+            for (const trayItem of this._items.values())
+                last = Math.max(last, children.indexOf(trayItem.container || trayItem));
+            return last + 1;
+        };
+
         const tearDown = () => {
             // Reveal everything we manage; destroy the overflow button.
             for (const trayItem of entries) {
@@ -3388,17 +3401,17 @@ export default class StatusTrayExtension extends Extension {
                 counter++;
             }
             this._overflowAreaKey = areaKey;
-            Main.panel.addToStatusArea(areaKey, this._overflowButton, entries.length, 'right');
+            Main.panel.addToStatusArea(areaKey, this._overflowButton, slotAfterManagedItems(), 'right');
         } else {
             // icon-mode may have changed since last apply; re-pick asset.
             this._overflowButton.updateOverflowIcon();
         }
 
         // Keep the overflow button at the rightmost slot relative to our
-        // managed items (hidden containers still occupy their slot).
+        // managed items (hidden and passive containers still occupy a slot).
         const overflowContainer = this._overflowButton.container || this._overflowButton;
         if (overflowContainer.get_parent() === rightBox) {
-            rightBox.set_child_at_index(overflowContainer, entries.length);
+            rightBox.set_child_at_index(overflowContainer, slotAfterManagedItems());
         }
 
         this._overflowButton.setOverflowedItems(overflowed);
