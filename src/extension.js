@@ -3083,6 +3083,9 @@ export default class StatusTrayExtension extends Extension {
             if (this._watcher)
                 this._watcher.updateItemAppId(uniqueId, resolvedAppId);
             this._refreshItems();
+            // App ID often arrives after the item is already in the panel;
+            // re-apply app-order once we can match against it.
+            this._scheduleReorder();
         });
 
         trayItem.connect('passive-changed', () => {
@@ -3114,6 +3117,7 @@ export default class StatusTrayExtension extends Extension {
         }
         Main.panel.addToStatusArea(areaKey, trayItem, position, 'right');
         debug(`Added TrayItem: ${uniqueId} as ${areaKey} at position ${position}`);
+        this._scheduleReorder();
         this._applyOverflow();
     }
 
@@ -3303,16 +3307,8 @@ export default class StatusTrayExtension extends Extension {
             return 0;
         });
 
-        // Check if the order actually changed
-        const currentOrder = Array.from(this._items.keys());
-        const desiredOrder = entries.map(e => e.uniqueId);
-        if (currentOrder.length === desiredOrder.length &&
-            currentOrder.every((id, i) => id === desiredOrder[i])) {
-            debug('_reorderItems: order unchanged, skipping');
-            return;
-        }
-
-        // Reposition existing widgets within the panel box
+        // Always reposition panel widgets — Map key order can match while
+        // rightBox child indices still differ (e.g. after late appid-resolved).
         const rightBox = Main.panel._rightBox;
         for (let i = 0; i < entries.length; i++) {
             const { trayItem } = entries[i];
