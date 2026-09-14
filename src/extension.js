@@ -2285,12 +2285,14 @@ class OverflowButton extends PanelMenu.Button {
     setOverflowedItems(trayItems) {
         this._overflowedItems = trayItems;
 
-        // Disconnect from any TrayItems no longer in the overflow set before
-        // rebuilding; connectObject/disconnectObject uses `this` as the owner.
-        for (const trayItem of this._rows.keys()) {
-            if (!trayItems.includes(trayItem))
-                trayItem.disconnectObject(this);
-        }
+        // Disconnect every TrayItem we wired up last time, not just the ones
+        // dropping out of the set: the loop below reconnects 'display-changed'
+        // for the whole new set, and connectObject appends rather than
+        // replaces, so sparing the survivors stacks a duplicate handler on
+        // each of them on every call. connectObject/disconnectObject uses
+        // `this` as the owner.
+        for (const trayItem of this._rows.keys())
+            trayItem.disconnectObject(this);
 
         this.menu.removeAll();
         this._rows.clear();
