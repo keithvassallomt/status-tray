@@ -4,6 +4,13 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.18] - 2026-09-14
+
+### Fixed
+- Tray icons now follow your configured app order straight after login. `app-order` was only re-applied when the setting itself changed, so on a fresh shell icons came up in whatever order the apps happened to register in and only sorted themselves out once you opened preferences and touched something. The order is now re-applied when an item registers and again when its App ID resolves, which for plenty of apps — Electron ones especially — only happens after the icon is already in the panel. Thanks to [@BNKPI](https://github.com/BNKPI) for the fix (#25).
+- The overflow button no longer wedges itself in between visible tray icons. Its panel slot was worked out from the number of visible items, while the reordering pass gives a slot to every item it manages, passive ones included — so a single passive app in the tray was enough to leave the button sitting one place to the left of where it belongs. Only affected setups with Overflow enabled.
+- Overflow menu rows no longer pile up duplicate icon-update handlers. Every time the overflow set was rebuilt, items that were still in it got reconnected to their `display-changed` signal without being disconnected first, so a long-running session with Overflow enabled did steadily more redundant work each time one of those icons changed. No visible symptom was reported for this one; it turned up while reviewing the app-order fix above.
+
 ## [1.17] - 2026-08-28
 
 ### Fixed
