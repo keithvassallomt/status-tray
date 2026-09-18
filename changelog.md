@@ -4,6 +4,18 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.19] - [UNRELEASED]
+
+### Added
+- Panel position setting under Appearance & Behaviour: choose whether the tray sits in the left, centre or right section of the top bar. Right is the default and matches previous behaviour. Changing it moves the icons immediately and the overflow button follows them. In the left and centre sections the tray is placed after whatever already lives there, so the Activities button and the clock keep their places. Finer control than the three sections — an exact slot relative to other extensions' indicators — is not offered; that belongs to a panel-management extension. Thanks to [@hopsayer](https://github.com/hopsayer) for the request (#26).
+
+### Changed
+- Confirmed GNOME 51 compatibility and updated manifest.
+
+### Fixed
+- Tray icons now appear for apps that register themselves as `<bus name>/<object path>` in a single string. Slack — and, most likely, other Electron apps — passes something like `org.freedesktop.StatusNotifierItem-4-1/StatusNotifierItem/1` to `RegisterStatusNotifierItem`, and the whole string was taken as the bus name, so the tray sat waiting on a connection that doesn't exist and left a blank "…" slot whose menu never got past "Loading…". A D-Bus bus name can never contain a `/`, so a slash anywhere but the first character is now treated as the split between the bus name and the item's object path. Thanks to [@osmianski](https://github.com/osmianski) for the fix (#27).
+  - Note: the Flatpak build of Slack also needs permission to own its tray bus name before any tray can see it at all — `flatpak override --user --own-name='org.freedesktop.*' com.slack.Slack`.
+
 ## [1.18] - 2026-09-14
 
 ### Fixed
