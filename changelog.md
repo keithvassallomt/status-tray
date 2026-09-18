@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.19] - [UNRELEASED]
+## [1.19] - 2026-09-18
 
 ### Added
 - Panel position setting under Appearance & Behaviour: choose whether the tray sits in the left, centre or right section of the top bar. Right is the default and matches previous behaviour. Changing it moves the icons immediately and the overflow button follows them. In the left and centre sections the tray is placed after whatever already lives there, so the Activities button and the clock keep their places. Finer control than the three sections — an exact slot relative to other extensions' indicators — is not offered; that belongs to a panel-management extension. Thanks to [@hopsayer](https://github.com/hopsayer) for the request (#26).
