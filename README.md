@@ -32,6 +32,7 @@ A GNOME Shell extension that brings back the system tray for applications using 
 | GNOME 48 | Supported |
 | GNOME 49 | Supported |
 | GNOME 50 | Supported |
+| GNOME 51 | Supported |
 
 ### Tested Applications
 

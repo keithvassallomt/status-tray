@@ -36,7 +36,7 @@ This document provides comprehensive technical documentation for developers and 
 
 ### Supported GNOME Versions
 
-- GNOME 45, 46, 47, 48, 49, 50
+- GNOME 45, 46, 47, 48, 49, 50, 51
 
 ### Extension Metadata
 
