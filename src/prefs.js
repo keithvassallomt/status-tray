@@ -1810,6 +1810,37 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         });
         appearanceGroup.add(clickActionRow);
 
+        const panelPositionRow = new Adw.ComboRow({
+            title: 'Panel position',
+            subtitle: 'Which part of the top bar holds the tray icons',
+        });
+        const panelPositionModel = new Gtk.StringList();
+        panelPositionModel.append('Left');
+        panelPositionModel.append('Centre');
+        panelPositionModel.append('Right');
+        panelPositionRow.set_model(panelPositionModel);
+
+        const panelPositionFactory = new Gtk.SignalListItemFactory();
+        panelPositionFactory.connect('setup', (_factory, item) => {
+            item.set_child(new Gtk.Label({ xalign: 0 }));
+        });
+        panelPositionFactory.connect('bind', (_factory, item) => {
+            item.get_child().set_label(item.get_item().get_string());
+        });
+        panelPositionRow.set_factory(panelPositionFactory);
+
+        const panelPositionValues = ['left', 'center', 'right'];
+        const currentPanelPosition = this._settings.get_string('panel-position');
+        const panelPositionIndex = panelPositionValues.indexOf(currentPanelPosition);
+        const panelPositionDefault = panelPositionValues.indexOf('right');
+        panelPositionRow.set_selected(panelPositionIndex < 0 ? panelPositionDefault : panelPositionIndex);
+
+        panelPositionRow.connect('notify::selected', () => {
+            const selected = panelPositionRow.get_selected();
+            this._settings.set_string('panel-position', panelPositionValues[selected] ?? 'right');
+        });
+        appearanceGroup.add(panelPositionRow);
+
         // GTK offers no way to detect a clash with a system or third-party
         // shortcut, so the subtitle says so rather than pretending to check.
         const shortcutRow = new Adw.ActionRow({

@@ -2978,6 +2978,10 @@ export default class StatusTrayExtension extends Extension {
                 }
                 this._refreshItems();
             },
+            'changed::panel-position', () => {
+                debug('panel-position setting changed');
+                this._reparentAll();
+            },
             'changed::overflow-enabled', () => {
                 debug('overflow-enabled setting changed');
                 this._applyOverflow();
@@ -3122,8 +3126,10 @@ export default class StatusTrayExtension extends Extension {
             areaKey = `StatusTray-${appId}-${counter}`;
             counter++;
         }
-        Main.panel.addToStatusArea(areaKey, trayItem, position, 'right');
-        debug(`Added TrayItem: ${uniqueId} as ${areaKey} at position ${position}`);
+        const boxName = this._panelBoxName();
+        const slot = this._managedBase(this._panelBox()) + position;
+        Main.panel.addToStatusArea(areaKey, trayItem, slot, boxName);
+        debug(`Added TrayItem: ${uniqueId} as ${areaKey} at slot ${slot} (${boxName} box)`);
         this._scheduleReorder();
         this._applyOverflow();
     }
@@ -3258,6 +3264,79 @@ export default class StatusTrayExtension extends Extension {
     }
 
     /**
+     * Which top bar box the user has chosen for the tray. Defaults to the
+     * historical 'right' if the value is ever unset or unrecognised.
+     */
+    _panelBoxName() {
+        const name = this._settings?.get_string('panel-position') ?? 'right';
+        return (name === 'left' || name === 'center') ? name : 'right';
+    }
+
+    /** The St.BoxLayout matching _panelBoxName(). */
+    _panelBox() {
+        switch (this._panelBoxName()) {
+        case 'left':
+            return Main.panel._leftBox ?? Main.panel._rightBox;
+        case 'center':
+            return Main.panel._centerBox ?? Main.panel._rightBox;
+        default:
+            return Main.panel._rightBox;
+        }
+    }
+
+    /**
+     * Index in `box` where our block of managed items starts.
+     *
+     * The right box is ours from slot 0 by long-standing behaviour, so items
+     * keep landing leftmost there. The left and centre boxes already hold the
+     * Activities button and the clock, so an empty tray appends instead of
+     * shoving itself in front of them. Once we do hold slots in a box, the
+     * first one we occupy is the base, which keeps the block contiguous as
+     * items come and go.
+     */
+    _managedBase(box) {
+        const children = box.get_children();
+        let first = -1;
+        for (const trayItem of this._items.values()) {
+            const idx = children.indexOf(trayItem.container || trayItem);
+            if (idx !== -1 && (first === -1 || idx < first))
+                first = idx;
+        }
+        if (first !== -1)
+            return first;
+        return this._panelBoxName() === 'right' ? 0 : children.length;
+    }
+
+    /**
+     * Move every managed item into the currently configured box.
+     *
+     * addToStatusArea binds an indicator to its box at insert time, so there
+     * is no reparent short of tearing the items down and letting the watcher
+     * hand them back. The watcher keeps its registrations (the destroys are
+     * flagged internal), so _refreshItems re-adds the same set into the new
+     * box.
+     */
+    _reparentAll() {
+        if (!this._watcher)
+            return;
+
+        debug(`Reparenting tray into ${this._panelBoxName()} box`);
+
+        if (this._overflowButton) {
+            this._overflowButton.destroy();
+            this._overflowButton = null;
+        }
+
+        for (const [, item] of this._items) {
+            item._destroyedInternally = true;
+            item.destroy();
+        }
+        this._items.clear();
+
+        this._refreshItems();
+    }
+
+    /**
      * Calculate the panel position for a tray item based on app-order setting
      * LOWER positions appear further LEFT in the panel box (index 0 = leftmost)
      * HIGHER positions appear further RIGHT (closer to edge)
@@ -3315,13 +3394,17 @@ export default class StatusTrayExtension extends Extension {
         });
 
         // Always reposition panel widgets — Map key order can match while
-        // rightBox child indices still differ (e.g. after late appid-resolved).
-        const rightBox = Main.panel._rightBox;
+        // box child indices still differ (e.g. after late appid-resolved).
+        // Slots are relative to where our block starts: in the left and centre
+        // boxes index 0 belongs to the Activities button or the clock, so
+        // laying out from a fixed 0 would interleave us with them.
+        const box = this._panelBox();
+        const base = this._managedBase(box);
         for (let i = 0; i < entries.length; i++) {
             const { trayItem } = entries[i];
             const container = trayItem.container || trayItem;
-            if (container.get_parent() === rightBox) {
-                rightBox.set_child_at_index(container, i);
+            if (container.get_parent() === box) {
+                box.set_child_at_index(container, base + i);
             }
         }
 
@@ -3353,7 +3436,7 @@ export default class StatusTrayExtension extends Extension {
         // accounting so they don't push real items into the overflow popup,
         // and so tearDown's blanket .show() doesn't reveal them.
         const entries = [...this._items.values()].filter(t => !t._isPassive);
-        const rightBox = Main.panel._rightBox;
+        const box = this._panelBox();
 
         // Anchoring the button is NOT the same accounting as the filter above.
         // _reorderItems hands a panel slot to every managed item, passive ones
@@ -3361,11 +3444,14 @@ export default class StatusTrayExtension extends Extension {
         // icons as soon as one passive item exists. Anchor just past the last
         // managed container actually in the box instead.
         const slotAfterManagedItems = () => {
-            const children = rightBox.get_children();
+            const children = box.get_children();
             let last = -1;
             for (const trayItem of this._items.values())
                 last = Math.max(last, children.indexOf(trayItem.container || trayItem));
-            return last + 1;
+            // Nothing of ours parented yet: fall back to the block's base, so
+            // an early call can't drop the button in front of the Activities
+            // button or the clock.
+            return last === -1 ? this._managedBase(box) : last + 1;
         };
 
         const tearDown = () => {
@@ -3406,7 +3492,7 @@ export default class StatusTrayExtension extends Extension {
                 counter++;
             }
             this._overflowAreaKey = areaKey;
-            Main.panel.addToStatusArea(areaKey, this._overflowButton, slotAfterManagedItems(), 'right');
+            Main.panel.addToStatusArea(areaKey, this._overflowButton, slotAfterManagedItems(), this._panelBoxName());
         } else {
             // icon-mode may have changed since last apply; re-pick asset.
             this._overflowButton.updateOverflowIcon();
@@ -3415,8 +3501,8 @@ export default class StatusTrayExtension extends Extension {
         // Keep the overflow button at the rightmost slot relative to our
         // managed items (hidden and passive containers still occupy a slot).
         const overflowContainer = this._overflowButton.container || this._overflowButton;
-        if (overflowContainer.get_parent() === rightBox) {
-            rightBox.set_child_at_index(overflowContainer, slotAfterManagedItems());
+        if (overflowContainer.get_parent() === box) {
+            box.set_child_at_index(overflowContainer, slotAfterManagedItems());
         }
 
         this._overflowButton.setOverflowedItems(overflowed);

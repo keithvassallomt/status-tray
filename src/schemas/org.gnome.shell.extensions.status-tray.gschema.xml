@@ -81,6 +81,17 @@
       <description>Maps an app's display name to a stable appId used as the settings key. Opt-in per app via the "Match by App Name" switch in icon customization. Intended for apps (e.g. Karing) that randomize their SNI Id on every launch.</description>
     </key>
 
+    <key name="panel-position" type="s">
+      <choices>
+        <choice value="left"/>
+        <choice value="center"/>
+        <choice value="right"/>
+      </choices>
+      <default>'right'</default>
+      <summary>Panel box for tray icons</summary>
+      <description>Which top bar box holds the tray icons. 'right' is the default status area. 'center' places them alongside the clock, 'left' alongside the Activities button. Fine-grained ordering within a box relative to other extensions is not offered; use a panel-management extension for that.</description>
+    </key>
+
     <key name="overflow-enabled" type="b">
       <default>false</default>
       <summary>Enable panel overflow</summary>
