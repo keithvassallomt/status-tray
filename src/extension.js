@@ -2726,6 +2726,11 @@ class StatusNotifierWatcher {
         if (service.charAt(0) === '/') {
             busName = invocation.get_sender();
             objectPath = service;
+        } else if (service.includes('/')) {
+            // Chromium/Electron registers as "<bus name>/<object path>".
+            const slashIndex = service.indexOf('/');
+            busName = await this._resolveNameOwner(service.substring(0, slashIndex), invocation);
+            objectPath = service.substring(slashIndex);
         } else if (BUS_ADDRESS_REGEX.test(service)) {
             busName = await this._resolveNameOwner(service, invocation);
             objectPath = DEFAULT_ITEM_OBJECT_PATH;
