@@ -295,6 +295,28 @@ const WATCHER_BUS_NAME = 'org.kde.StatusNotifierWatcher';
 const WATCHER_OBJECT_PATH = '/StatusNotifierWatcher';
 const DEFAULT_ITEM_OBJECT_PATH = '/StatusNotifierItem';
 
+// Well-known name an app takes for its item before registering it. The spec
+// says org.kde.StatusNotifierItem-PID-ID, but Electron apps use an
+// org.freedesktop one (Ferdium: org.freedesktop.StatusNotifierItem-2-1), so
+// both namespaces have to be watched. Seeing the name lets us pick up apps
+// that gave up on RegisterStatusNotifierItem because we weren't there yet.
+const SNI_WELL_KNOWN_NAMESPACES = ['org.kde', 'org.freedesktop'];
+const SNI_WELL_KNOWN_NAME_RE = /^org\.(kde|freedesktop)\.StatusNotifierItem-/;
+
+// Probes run while the login storm is still settling, so allow more than a
+// quiet round trip before writing a connection off as having no item.
+const SNI_PROBE_TIMEOUT_MS = 3000;
+
+// Sweeps for items that appeared before we owned the watcher name. gnome-session
+// launches autostart apps before extensions are enabled, and a cold-starting
+// Discord or Dropbox can take tens of seconds to export its item.
+const SNI_RESCAN_DELAYS_MS = [2000, 5000, 15000, 30000, 60000];
+
+// Bounds on the object-tree walk, so a service with a large tree can't turn a
+// sweep into hundreds of D-Bus calls.
+const INTROSPECT_MAX_DEPTH = 4;
+const INTROSPECT_MAX_CALLS_PER_NAME = 16;
+
 // D-Bus well-known name grammar: elements use [A-Za-z0-9_-]. Hyphens are
 // required for canonical SNI names like `org.kde.StatusNotifierItem-PID-ID`.
 const BUS_ADDRESS_REGEX = /^[a-zA-Z_-][a-zA-Z0-9_-]*(\.[a-zA-Z_-][a-zA-Z0-9_-]*)+$/;
@@ -2435,6 +2457,11 @@ class StatusNotifierWatcher {
         this._cancellable = new Gio.Cancellable();
         this._healthCheckTimeoutId = 0;
         this._pendingDelayIds = new Set();
+        this._rescanTimeoutIds = new Set();
+        this._sniNameWatchIds = [];
+        this._ownNameId = 0;
+        this._ownNameWatchId = 0;
+        this._walkedBusNames = new Set();
 
         const nodeInfo = Gio.DBusNodeInfo.new_for_xml(SNW_INTERFACE_XML);
         const ifaceInfo = nodeInfo.lookup_interface('org.kde.StatusNotifierWatcher');
@@ -2446,6 +2473,58 @@ class StatusNotifierWatcher {
             debug('StatusNotifierWatcher exported on D-Bus');
         } catch (e) {
             debug(`Failed to export StatusNotifierWatcher: ${e.message}`);
+        }
+
+        this._watchOwnName();
+        this._ownName();
+
+        this._seekExistingItems();
+        this._scheduleRescans();
+        this._watchForSNINames();
+
+        // Schedule a delayed health check for items discovered above.
+        // After suspend/resume, GNOME Shell disables and re-enables extensions,
+        // so this constructor runs fresh each time. Stale Flatpak xdg-dbus-proxy
+        // zombies often respond to initial property queries but break within
+        // seconds — the delay gives them time to fail before we test.
+        // At normal login this is harmless: all items pass the check.
+        this._healthCheckTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 8000, () => {
+            this._healthCheckTimeoutId = 0;
+            this._healthCheckAllItems();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    // unown_name() reports nothing when it completes, so a disable followed by
+    // an enable (which the shell does on every lock and unlock) can have the
+    // old instance's ReleaseName arrive after the new instance's RequestName.
+    // Both run on the shell's one connection, so the late release takes the
+    // name back off us and we are left exported, owning nothing, with no
+    // watcher on the bus at all until someone toggles the extension. Watching
+    // the name lets us take it again the moment it falls free.
+    _watchOwnName() {
+        this._ownNameWatchId = Gio.DBus.session.signal_subscribe(
+            'org.freedesktop.DBus',
+            'org.freedesktop.DBus',
+            'NameOwnerChanged',
+            '/org/freedesktop/DBus',
+            WATCHER_BUS_NAME,
+            Gio.DBusSignalFlags.NONE,
+            (conn, sender, path, iface, signal, params) => {
+                const [, , newOwner] = params.deep_unpack();
+                if (newOwner !== '' || this._cancellable.is_cancelled())
+                    return;
+
+                debug(`${WATCHER_BUS_NAME} went unowned, reclaiming it`);
+                this._ownName();
+            }
+        );
+    }
+
+    _ownName() {
+        if (this._ownNameId) {
+            Gio.DBus.session.unown_name(this._ownNameId);
+            this._ownNameId = 0;
         }
 
         this._ownNameId = Gio.DBus.session.own_name(
@@ -2463,64 +2542,224 @@ class StatusNotifierWatcher {
                 debug(`Lost bus name: ${WATCHER_BUS_NAME}`);
             }
         );
+    }
 
-        this._seekExistingItems();
+    _isCancelled(e) {
+        return e instanceof GLib.Error &&
+            e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED);
+    }
 
-        // Schedule a delayed health check for items discovered above.
-        // After suspend/resume, GNOME Shell disables and re-enables extensions,
-        // so this constructor runs fresh each time. Stale Flatpak xdg-dbus-proxy
-        // zombies often respond to initial property queries but break within
-        // seconds — the delay gives them time to fail before we test.
-        // At normal login this is harmless: all items pass the check.
-        this._healthCheckTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 8000, () => {
-            this._healthCheckTimeoutId = 0;
-            this._healthCheckAllItems();
-            return GLib.SOURCE_REMOVE;
+    // A peer that never answered may simply have been busy; one that answered
+    // with an error has told us something that won't change.
+    _isTransient(e) {
+        if (!(e instanceof GLib.Error))
+            return false;
+
+        return e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.TIMED_OUT) ||
+            e.matches(Gio.DBusError, Gio.DBusError.NO_REPLY) ||
+            e.matches(Gio.DBusError, Gio.DBusError.TIMEOUT) ||
+            e.matches(Gio.DBusError, Gio.DBusError.TIMED_OUT);
+    }
+
+    _busCall(name, objectPath, iface, method, params, replyType, timeoutMs) {
+        return new Promise((resolve, reject) => {
+            Gio.DBus.session.call(
+                name,
+                objectPath,
+                iface,
+                method,
+                params,
+                replyType ? new GLib.VariantType(replyType) : null,
+                Gio.DBusCallFlags.NONE,
+                timeoutMs,
+                this._cancellable,
+                (conn, res) => {
+                    try {
+                        resolve(conn.call_finish(res));
+                    } catch (e) {
+                        reject(e);
+                    }
+                }
+            );
         });
+    }
+
+    // One sweep can't win the race on its own: at login gnome-session starts
+    // autostart apps before extensions are enabled, so an app may export its
+    // item any time in the first minute. Keep looking on a backoff.
+    _scheduleRescans() {
+        for (const delay of SNI_RESCAN_DELAYS_MS) {
+            const id = GLib.timeout_add(GLib.PRIORITY_LOW, delay, () => {
+                this._rescanTimeoutIds.delete(id);
+                this._seekExistingItems();
+                return GLib.SOURCE_REMOVE;
+            });
+            this._rescanTimeoutIds.add(id);
+        }
+    }
+
+    // An app that failed to register still takes its well-known name and keeps
+    // the item exported, so the name appearing is our cue to go looking —
+    // however late the app starts. Matched by namespace so the bus filters for
+    // us rather than waking us for every name change on the session bus.
+    _watchForSNINames() {
+        for (const namespace of SNI_WELL_KNOWN_NAMESPACES) {
+            const id = Gio.DBus.session.signal_subscribe(
+                'org.freedesktop.DBus',
+                'org.freedesktop.DBus',
+                'NameOwnerChanged',
+                '/org/freedesktop/DBus',
+                namespace,
+                Gio.DBusSignalFlags.MATCH_ARG0_NAMESPACE,
+                (conn, sender, path, iface, signal, params) => {
+                    const [name, , newOwner] = params.deep_unpack();
+                    if (!newOwner || !SNI_WELL_KNOWN_NAME_RE.test(name))
+                        return;
+
+                    debug(`SNI name appeared: ${name} (owner ${newOwner})`);
+                    // Let the app finish exporting, and let its own
+                    // registration win the race if it makes one —
+                    // _registerIfNew dedupes either way, since registrations
+                    // resolve to the same unique name.
+                    this._probeAfterDelay(newOwner, 1000);
+                }
+            );
+            this._sniNameWatchIds.push(id);
+        }
+    }
+
+    async _probeAfterDelay(busName, ms) {
+        try {
+            await this._delay(ms);
+            await this._discoverItemsOn(busName);
+        } catch (e) {
+            if (!this._isCancelled(e))
+                debug(`Probe of ${busName} failed: ${e.message}`);
+        }
     }
 
     // Find apps that registered before we claimed the watcher name
     async _seekExistingItems() {
-        try {
-            const bus = Gio.DBus.session;
+        if (this._cancellable.is_cancelled())
+            return;
 
-            const result = await new Promise((resolve, reject) => {
-                bus.call(
-                    'org.freedesktop.DBus',
-                    '/org/freedesktop/DBus',
-                    'org.freedesktop.DBus',
-                    'ListNames',
-                    null,
-                    new GLib.VariantType('(as)'),
-                    Gio.DBusCallFlags.NONE,
-                    -1,
-                    this._cancellable,
-                    (conn, res) => {
-                        try {
-                            resolve(conn.call_finish(res));
-                        } catch (e) {
-                            reject(e);
-                        }
-                    }
-                );
-            });
+        try {
+            const result = await this._busCall(
+                'org.freedesktop.DBus',
+                '/org/freedesktop/DBus',
+                'org.freedesktop.DBus',
+                'ListNames',
+                null,
+                '(as)',
+                SNI_PROBE_TIMEOUT_MS
+            );
 
             const [names] = result.deep_unpack();
+            const ownName = Gio.DBus.session.get_unique_name();
+            const knownBusNames = new Set(
+                [...this._items.values()].map(item => item.busName));
 
-            for (const name of names) {
-                if (name.startsWith(':')) {
-                    try {
-                        await this._checkForSNI(name, DEFAULT_ITEM_OBJECT_PATH);
-                    } catch (e) {
-                        // Ignore - not all connections have SNI
-                    }
-                }
-            }
+            // Probe every connection at once: done serially, a single
+            // unresponsive service holds up the whole sweep for its timeout,
+            // which at login is exactly when we can least afford it.
+            const results = await Promise.allSettled(
+                names
+                    .filter(name => name.startsWith(':') &&
+                        name !== ownName && !knownBusNames.has(name))
+                    .map(name => this._discoverItemsOn(name)));
+
+            const failed = results.filter(r => r.status === 'rejected').length;
+            if (failed > 0)
+                debug(`Sweep finished with ${failed} connection(s) erroring out`);
         } catch (e) {
-            if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
+            if (!this._isCancelled(e))
                 debug(`Error seeking existing items: ${e.message}`);
-            }
         }
+    }
+
+    // Most apps export at the default path, so try that first; fall back to
+    // walking the object tree for the ones that don't (Ayatana's
+    // /org/ayatana/NotificationItem/<id>, Chromium's own path), which a probe
+    // of a single hardcoded path can never see.
+    //
+    // The walk is the expensive half, so each connection gets one. Repeat
+    // sweeps still probe the default path — what they're really looking for is
+    // connections that weren't there last time, and those are unwalked.
+    async _discoverItemsOn(busName) {
+        if (this._cancellable.is_cancelled())
+            return;
+
+        if (await this._checkForSNI(busName, DEFAULT_ITEM_OBJECT_PATH))
+            return;
+
+        if (this._walkedBusNames.has(busName))
+            return;
+
+        const walk = {calls: 0, retryable: false};
+        const paths = await this._introspectForSNI(busName, '/', 0, walk);
+
+        // A connection that didn't answer gets another go next sweep: on a cold
+        // boot an app can be too busy to reply at 2s and perfectly responsive
+        // at 30s. One that answered "no such interface" won't change its mind.
+        if (!walk.retryable)
+            this._walkedBusNames.add(busName);
+
+        for (const objectPath of paths)
+            this._registerIfNew(busName, objectPath);
+    }
+
+    async _introspectForSNI(busName, objectPath, depth, walk) {
+        if (depth > INTROSPECT_MAX_DEPTH ||
+            walk.calls >= INTROSPECT_MAX_CALLS_PER_NAME)
+            return [];
+
+        walk.calls++;
+
+        let nodeInfo;
+        try {
+            const result = await this._busCall(
+                busName,
+                objectPath,
+                'org.freedesktop.DBus.Introspectable',
+                'Introspect',
+                null,
+                '(s)',
+                SNI_PROBE_TIMEOUT_MS
+            );
+            const [xml] = result.deep_unpack();
+            nodeInfo = Gio.DBusNodeInfo.new_for_xml(xml);
+        } catch (e) {
+            // Not introspectable, nothing at this path, or malformed XML.
+            if (depth === 0 && this._isTransient(e)) {
+                walk.retryable = true;
+                debug(`Could not introspect ${busName}: ${e.message}`);
+            }
+            return [];
+        }
+
+        const paths = nodeInfo.interfaces.some(
+            i => i.name === 'org.kde.StatusNotifierItem') ? [objectPath] : [];
+
+        const prefix = objectPath === '/' ? '' : objectPath;
+        const children = await Promise.all(nodeInfo.nodes.map(node => {
+            if (!node.path)
+                return [];
+            // Child names are relative, but some services emit absolute ones.
+            const childPath = node.path.startsWith('/')
+                ? node.path : `${prefix}/${node.path}`;
+            return this._introspectForSNI(busName, childPath, depth + 1, walk);
+        }));
+
+        return paths.concat(...children);
+    }
+
+    _registerIfNew(busName, objectPath) {
+        const uniqueId = `${busName}${objectPath}`;
+        if (this._items.has(uniqueId))
+            return;
+
+        debug(`Found existing SNI: ${uniqueId}`);
+        this._registerItemInternal(busName, objectPath);
     }
 
     _delay(ms) {
@@ -2682,39 +2921,27 @@ class StatusNotifierWatcher {
         }
     }
 
+    // Returns whether an item was found, so callers know to stop looking.
     async _checkForSNI(busName, objectPath) {
-        const bus = Gio.DBus.session;
-
         try {
-            await new Promise((resolve, reject) => {
-                bus.call(
-                    busName,
-                    objectPath,
-                    'org.freedesktop.DBus.Properties',
-                    'Get',
-                    new GLib.Variant('(ss)', ['org.kde.StatusNotifierItem', 'Id']),
-                    new GLib.VariantType('(v)'),
-                    Gio.DBusCallFlags.NONE,
-                    1000,  // Short timeout
-                    this._cancellable,
-                    (conn, res) => {
-                        try {
-                            conn.call_finish(res);
-                            resolve();
-                        } catch (e) {
-                            reject(e);
-                        }
-                    }
-                );
-            });
-
-            const uniqueId = `${busName}${objectPath}`;
-            if (!this._items.has(uniqueId)) {
-                debug(`Found existing SNI: ${uniqueId}`);
-                this._registerItemInternal(busName, objectPath);
-            }
+            await this._busCall(
+                busName,
+                objectPath,
+                'org.freedesktop.DBus.Properties',
+                'Get',
+                new GLib.Variant('(ss)', ['org.kde.StatusNotifierItem', 'Id']),
+                '(v)',
+                SNI_PROBE_TIMEOUT_MS
+            );
         } catch (e) {
+            // Most connections simply have no item here; a timeout under load
+            // is the interesting case, so say which one we got.
+            debug(`No SNI at ${busName}${objectPath}: ${e.message}`);
+            return false;
         }
+
+        this._registerIfNew(busName, objectPath);
+        return true;
     }
 
     async RegisterStatusNotifierItemAsync(params, invocation) {
@@ -2742,7 +2969,7 @@ class StatusNotifierWatcher {
         debug(`Registering item: busName=${busName}, objectPath=${objectPath}`);
 
         try {
-            this._registerItemInternal(busName, objectPath);
+            this._reregisterItem(busName, objectPath);
             invocation.return_value(null);
         } catch (e) {
             debug(`Failed to register item: ${e.message}`);
@@ -2789,6 +3016,21 @@ class StatusNotifierWatcher {
             objectPath: itemInfo.objectPath,
             appId: itemInfo.appId,
         };
+    }
+
+    // An app registering something we already hold is telling us its item has
+    // been rebuilt, so rebuild ours rather than keep a proxy pointed at the old
+    // one. Discovery arrives through _registerIfNew instead, which stays a
+    // no-op for items we already have.
+    _reregisterItem(busName, objectPath) {
+        const uniqueId = `${busName}${objectPath}`;
+
+        if (this._items.has(uniqueId)) {
+            debug(`Re-registration of ${uniqueId}, rebuilding it`);
+            this._unregisterItem(uniqueId);
+        }
+
+        this._registerItemInternal(busName, objectPath);
     }
 
     _registerItemInternal(busName, objectPath) {
@@ -2906,6 +3148,21 @@ class StatusNotifierWatcher {
             GLib.source_remove(id);
         this._pendingDelayIds.clear();
 
+        for (const id of this._rescanTimeoutIds)
+            GLib.source_remove(id);
+        this._rescanTimeoutIds.clear();
+
+        this._walkedBusNames.clear();
+
+        for (const id of this._sniNameWatchIds)
+            Gio.DBus.session.signal_unsubscribe(id);
+        this._sniNameWatchIds = [];
+
+        if (this._ownNameWatchId) {
+            Gio.DBus.session.signal_unsubscribe(this._ownNameWatchId);
+            this._ownNameWatchId = 0;
+        }
+
         try {
             this._dbusImpl.emit_signal('StatusNotifierHostUnregistered', null);
         } catch (e) {
@@ -2936,6 +3193,15 @@ export default class StatusTrayExtension extends Extension {
         this._items = new Map();
 
         this._reorderTimeoutId = null;
+
+        // Claim org.kde.StatusNotifierWatcher before anything else in here.
+        // Apps that look for it at login and don't find it give up for good —
+        // Discord, Dropbox and KeePassXC tear their item down rather than
+        // retry — and the shell enables extensions one after another, so
+        // whatever we do first is time the whole session is waiting on. Only
+        // the state _onItemRegistered reads has to exist by now; discovery is
+        // async, so nothing calls back before enable() returns.
+        this._watcher = new StatusNotifierWatcher(this);
 
         this._settings.connectObject(
             'changed::disabled-apps', () => {
@@ -3010,8 +3276,6 @@ export default class StatusTrayExtension extends Extension {
             Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW | Shell.ActionMode.POPUP,
             () => this._keyboardTarget()?.toggleMenuWithKeyFocus()
         );
-
-        this._watcher = new StatusNotifierWatcher(this);
 
         // Kick off async theme-chain precompute so icon lookups use the full
         // inheritance chain without any sync file IO on the first lookup.
