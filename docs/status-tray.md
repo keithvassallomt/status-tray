@@ -649,36 +649,56 @@ settings.connect('changed::icon-mode', () => {
 
 ```
 StatusTrayPreferences (Adw.PreferencesWindow)
-└── Adw.PreferencesPage ("General")
-    ├── Adw.PreferencesGroup ("Appearance & Behaviour")
-    │   ├── Icon Style (Adw.ComboRow) → icon-mode
-    │   ├── Icon Size (Adw.ActionRow + Gtk.Scale) → icon-size
-    │   ├── Padding between icons (Adw.ActionRow + Gtk.Scale) → icon-padding
-    │   └── Icon interaction (Adw.ComboRow) → click-action
-    │
-    ├── Adw.PreferencesGroup ("Panel Overflow")
-    │   ├── Enable overflow icon (Adw.SwitchRow) → overflow-enabled
-    │   ├── Overflow button icon (Adw.ComboRow)  → overflow-icon-style
-    │   ├── Custom overflow icon (Adw.ActionRow) → overflow-custom-icon
-    │   │   (visible only when overflow-icon-style is 'custom'; "Choose…"
-    │   │   opens the icon picker for a theme icon or image file)
-    │   └── Inline icon limit (Adw.SpinRow)      → overflow-inline-count
-    │
-    ├── Adw.PreferencesGroup ("Tray Apps")
-    │   └── App Rows List
-    │       ├── AppRow (Gtk.ListBoxRow)
-    │       │   ├── Drag Handle
-    │       │   ├── Icon Preview
-    │       │   ├── App Name Label
-    │       │   ├── Enable/Disable Switch
-    │       │   ├── Icon Picker Button → IconPickerDialog
-    │       │   └── Effect Tuner Button → IconEffectDialog
-    │       ├── AppRow
-    │       └── ...
-    │
-    └── Adw.PreferencesGroup ("About")
-        └── Name/version/source links
+├── Header bar
+│   └── Main menu (Gtk.MenuButton) → About Status Tray (Adw.AboutDialog)
+│       (packed into the window's private AdwHeaderBar, found by walking the
+│       widget tree; if it can't be found, an About row goes on Appearance)
+│
+├── Adw.PreferencesPage ("Apps")            ← opens first
+│   └── Adw.PreferencesGroup ("Tray Apps")
+│       └── App Rows List
+│           ├── AppRow (Adw.ActionRow)
+│           │   ├── Drag Handle
+│           │   ├── Icon Button (shows the icon) → IconPickerDialog
+│           │   ├── App Name / App ID
+│           │   ├── Effect Tuner Button → IconEffectDialog
+│           │   └── Enable/Disable Switch → disabled-apps
+│           ├── AppRow
+│           └── ...
+│
+├── Adw.PreferencesPage ("Appearance")
+│   ├── Adw.PreferencesGroup ("Icons")
+│   │   ├── Icon style (Adw.ComboRow) → icon-mode
+│   │   ├── Size (Adw.ActionRow + Gtk.Scale) → icon-size
+│   │   └── Padding between icons (Adw.ActionRow + Gtk.Scale) → icon-padding
+│   └── Adw.PreferencesGroup ("Placement")
+│       └── Panel position (Adw.ComboRow) → panel-position
+│
+└── Adw.PreferencesPage ("Behaviour")
+    ├── Adw.PreferencesGroup ("Interaction")
+    │   ├── Click action (Adw.ComboRow) → click-action
+    │   └── Open menu shortcut (Adw.ActionRow) → toggle-menu
+    └── Adw.PreferencesGroup ("Overflow")
+        ├── Enable overflow (Adw.SwitchRow) → overflow-enabled
+        ├── Button icon (Adw.ComboRow) → overflow-icon-style
+        ├── Custom overflow icon (Adw.ActionRow) → overflow-custom-icon
+        │   (visible only when overflow-icon-style is 'custom'; "Choose…"
+        │   opens the icon picker for a theme icon or image file)
+        └── Inline icon limit (Adw.SpinRow) → overflow-inline-count
 ```
+
+### Window Size
+
+`fillPreferencesWindow` sizes the window once, straight after the synchronous
+`_populateAppsGroup()`, from the number of app rows. `_preferredHeight()` adds
+the header bar, page margins, group header and rows using constants measured on
+libadwaita 1.9 at the default text scale (46, 48, 57, then 54 for the first row
+and 55 for each after). The result is clamped between `MIN_PREFS_HEIGHT` (573,
+the Behaviour page with the custom icon row showing) and 85% of the smallest
+monitor. Width is fixed at 640: `AdwPreferencesPage` caps content at 600, and at
+600 or below `AdwPreferencesWindow` moves the page switcher into a bottom bar.
+Rows added later scroll rather than resize the window. If a label change makes a
+row wrap onto an extra line, re-measure and update the constants.
 
 ### AppRow (`prefs.js`)
 

@@ -18,6 +18,31 @@ function debug(msg) {
 // row at module level as a workaround.
 let _draggedRow = null;
 
+// Window size, from libadwaita 1.9 metrics at the default text scale. The
+// width must stay above 600: at or below that, AdwPreferencesWindow moves its
+// page switcher out of the header bar into a bar along the bottom.
+const PREFS_WIDTH = 640;
+const HEADER_BAR_HEIGHT = 46;
+const PAGE_MARGINS = 48;
+const GROUP_HEADER_HEIGHT = 57;
+const FIRST_ROW_HEIGHT = 54;
+const ROW_HEIGHT = 55;
+// The tallest fixed page: Behaviour with the custom overflow icon row showing.
+const MIN_PREFS_HEIGHT = 573;
+
+// AdwPreferencesWindow offers no API for adding header bar widgets, so the
+// main menu is packed into its private AdwHeaderBar. There is exactly one.
+function findHeaderBar(widget) {
+    if (widget instanceof Adw.HeaderBar)
+        return widget;
+    for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) {
+        const found = findHeaderBar(child);
+        if (found)
+            return found;
+    }
+    return null;
+}
+
 function cleanAppName(name) {
     if (!name) return null;
 
@@ -1649,26 +1674,39 @@ const ShortcutDialog = GObject.registerClass({
 export default class StatusTrayPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         this._window = window;
-        window.set_default_size(890, 900);
         this._settings = this.getSettings();
         this._bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
         this._signalIds = [];
         this._appRows = new Map();  // appId -> AppRow
 
-        const page = new Adw.PreferencesPage({
-            title: 'General',
-            icon_name: 'preferences-system-symbolic',
+        // Pages appear in the switcher in the order added. Apps comes first
+        // because it is what most people open this window for.
+        const appsPage = new Adw.PreferencesPage({
+            title: 'Apps',
+            icon_name: 'view-app-grid-symbolic',
         });
-        window.add(page);
+        window.add(appsPage);
 
-        const appearanceGroup = new Adw.PreferencesGroup({
-            title: 'Appearance & Behaviour',
-            description: 'Control how tray icons look and behave in the panel',
+        const appearancePage = new Adw.PreferencesPage({
+            title: 'Appearance',
+            icon_name: 'preferences-desktop-appearance-symbolic',
         });
-        page.add(appearanceGroup);
+        window.add(appearancePage);
+
+        const behaviourPage = new Adw.PreferencesPage({
+            title: 'Behaviour',
+            icon_name: 'input-mouse-symbolic',
+        });
+        window.add(behaviourPage);
+
+        const iconsGroup = new Adw.PreferencesGroup({
+            title: 'Icons',
+            description: 'How tray icons are drawn in the top bar',
+        });
+        appearancePage.add(iconsGroup);
 
         const iconModeRow = new Adw.ComboRow({
-            title: 'Icon Style',
+            title: 'Icon style',
             subtitle: 'How tray icons are displayed',
         });
 
@@ -1685,10 +1723,10 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             this._settings.set_string('icon-mode', selected === 0 ? 'symbolic' : 'original');
         });
 
-        appearanceGroup.add(iconModeRow);
+        iconsGroup.add(iconModeRow);
 
         const iconSizeRow = new Adw.ActionRow({
-            title: 'Icon Size',
+            title: 'Size',
             subtitle: 'The size of icons in the top bar',
         });
 
@@ -1731,7 +1769,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         iconSizeBox.append(iconSizeScale);
         iconSizeBox.append(iconSizeValue);
         iconSizeRow.add_suffix(iconSizeBox);
-        appearanceGroup.add(iconSizeRow);
+        iconsGroup.add(iconSizeRow);
 
         const iconPaddingRow = new Adw.ActionRow({
             title: 'Padding between icons',
@@ -1776,11 +1814,17 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         iconPaddingBox.append(iconPaddingScale);
         iconPaddingBox.append(iconPaddingValue);
         iconPaddingRow.add_suffix(iconPaddingBox);
-        appearanceGroup.add(iconPaddingRow);
+        iconsGroup.add(iconPaddingRow);
+
+        const interactionGroup = new Adw.PreferencesGroup({
+            title: 'Interaction',
+            description: 'What happens when you reach for a tray icon',
+        });
+        behaviourPage.add(interactionGroup);
 
         const clickActionRow = new Adw.ComboRow({
-            title: 'Icon interaction',
-            subtitle: 'What clicking a tray icon does',
+            title: 'Click action',
+            subtitle: 'Right click always shows the menu',
         });
         const clickActionModel = new Gtk.StringList();
         clickActionModel.append('Click for menu (default)');
@@ -1808,11 +1852,17 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             const selected = clickActionRow.get_selected();
             this._settings.set_string('click-action', clickActionValues[selected] ?? 'menu');
         });
-        appearanceGroup.add(clickActionRow);
+        interactionGroup.add(clickActionRow);
+
+        const placementGroup = new Adw.PreferencesGroup({
+            title: 'Placement',
+            description: 'Which part of the top bar holds the tray',
+        });
+        appearancePage.add(placementGroup);
 
         const panelPositionRow = new Adw.ComboRow({
             title: 'Panel position',
-            subtitle: 'Which part of the top bar holds the tray icons',
+            subtitle: 'Which top bar box holds the tray icons',
         });
         const panelPositionModel = new Gtk.StringList();
         panelPositionModel.append('Left');
@@ -1839,12 +1889,12 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             const selected = panelPositionRow.get_selected();
             this._settings.set_string('panel-position', panelPositionValues[selected] ?? 'right');
         });
-        appearanceGroup.add(panelPositionRow);
+        placementGroup.add(panelPositionRow);
 
         // GTK offers no way to detect a clash with a system or third-party
         // shortcut, so the subtitle says so rather than pretending to check.
         const shortcutRow = new Adw.ActionRow({
-            title: 'Open Menu Shortcut',
+            title: 'Open menu shortcut',
             subtitle: 'Opens the leftmost tray menu and focuses it. Left and Right move between menus. Not checked against shortcuts used elsewhere.',
             activatable: true,
         });
@@ -1868,17 +1918,17 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             });
             dialog.present(this._window);
         });
-        appearanceGroup.add(shortcutRow);
+        interactionGroup.add(shortcutRow);
 
         const overflowGroup = new Adw.PreferencesGroup({
-            title: 'Panel Overflow',
-            description: 'Collapse extra tray icons into an overflow menu at the right of the tray',
+            title: 'Overflow',
+            description: 'Collapse extra tray icons into a single button',
         });
-        page.add(overflowGroup);
+        behaviourPage.add(overflowGroup);
 
         const overflowEnabledRow = new Adw.SwitchRow({
-            title: 'Enable overflow icon',
-            subtitle: 'When there are more tray icons than the limit below, extras collapse into a single overflow button',
+            title: 'Enable overflow',
+            subtitle: 'Extra icons collapse into one button',
             active: this._settings.get_boolean('overflow-enabled'),
         });
         overflowEnabledRow.connect('notify::active', () => {
@@ -1887,8 +1937,8 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         overflowGroup.add(overflowEnabledRow);
 
         const overflowIconRow = new Adw.ComboRow({
-            title: 'Overflow button icon',
-            subtitle: 'Standard icon, a live preview, or your own custom icon',
+            title: 'Button icon',
+            subtitle: 'Standard icon, a live preview, or your own',
             sensitive: overflowEnabledRow.get_active(),
         });
         const overflowIconModel = new Gtk.StringList();
@@ -1981,7 +2031,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         const overflowCountRow = new Adw.SpinRow({
             title: 'Inline icon limit',
-            subtitle: 'How many icons stay in the panel before the rest overflow',
+            subtitle: 'How many icons stay in the panel',
             adjustment: new Gtk.Adjustment({
                 lower: 0,
                 upper: 20,
@@ -2003,7 +2053,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
         this._appsGroup = new Adw.PreferencesGroup({
             title: 'Tray Apps',
-            description: 'Drag to reorder. Click the icon to customize. Toggle to show/hide.',
+            description: 'Drag to reorder. Click the icon to customize. Toggle to show or hide.',
         });
 
         const resetOrderButton = new Gtk.Button({
@@ -2017,7 +2067,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         });
         this._appsGroup.set_header_suffix(resetOrderButton);
 
-        page.add(this._appsGroup);
+        appsPage.add(this._appsGroup);
 
         this._infoRow = new Adw.ActionRow({
             title: 'No apps detected yet',
@@ -2031,50 +2081,88 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         this._populateAppsGroup();
         this._subscribeToSignals();
 
-        const aboutGroup = new Adw.PreferencesGroup({
-            title: 'About',
-        });
-        page.add(aboutGroup);
+        // Sized once from the apps found above. Apps that start or quit later
+        // scroll the list rather than resizing the window under the user.
+        window.set_default_size(PREFS_WIDTH, this._preferredHeight(this._appRows.size));
 
-        const aboutRow = new Adw.ActionRow({
-            title: 'Status Tray',
-            subtitle: 'Automatic system tray for StatusNotifierItem apps',
-        });
-        const aboutIcon = new Gtk.Image({
-            gicon: new Gio.FileIcon({
-                file: Gio.File.new_for_path(
-                    GLib.build_filenamev([this.path, 'icons', 'status-tray.svg'])
-                ),
-            }),
-            pixel_size: 48,
-        });
-        aboutRow.add_prefix(aboutIcon);
-        aboutGroup.add(aboutRow);
-
-        const versionRow = new Adw.ActionRow({
-            title: 'Version',
-            subtitle: this.metadata['version-name'] ?? `${this.metadata.version}`,
-        });
-        aboutGroup.add(versionRow);
-
-        const linkRow = new Adw.ActionRow({
-            title: 'Source Code',
-            subtitle: this.metadata.url,
-            activatable: true,
-        });
-        linkRow.add_suffix(new Gtk.Image({
-            icon_name: 'insert-link-symbolic',
-            valign: Gtk.Align.CENTER,
-        }));
-        linkRow.connect('activated', () => {
-            Gio.AppInfo.launch_default_for_uri(this.metadata.url, null);
-        });
-        aboutGroup.add(linkRow);
+        this._addAboutEntry(window, appearancePage);
 
         window.connect('close-request', () => {
             this._cleanup();
             return false;
         });
+    }
+
+    _preferredHeight(appCount) {
+        const listHeight = appCount > 0
+            ? FIRST_ROW_HEIGHT + ROW_HEIGHT * (appCount - 1)
+            : 0;
+        const wanted = HEADER_BAR_HEIGHT + PAGE_MARGINS + GROUP_HEADER_HEIGHT + listHeight;
+
+        // The window's monitor is unknown until it maps, so cap against the
+        // smallest one. GTK 4 has no work-area API; 85% leaves room for the
+        // top bar.
+        let ceiling = Infinity;
+        const monitors = this._window.get_display().get_monitors();
+        for (let i = 0; i < monitors.get_n_items(); i++)
+            ceiling = Math.min(ceiling, monitors.get_item(i).get_geometry().height);
+
+        return Math.max(MIN_PREFS_HEIGHT, Math.min(wanted, Math.round(ceiling * 0.85)));
+    }
+
+    _addAboutEntry(window, fallbackPage) {
+        const actions = new Gio.SimpleActionGroup();
+        const aboutAction = new Gio.SimpleAction({ name: 'about' });
+        aboutAction.connect('activate', () => this._showAbout());
+        actions.add_action(aboutAction);
+        window.insert_action_group('status-tray', actions);
+
+        const headerBar = findHeaderBar(window);
+        if (headerBar) {
+            const menu = new Gio.Menu();
+            menu.append('About Status Tray', 'status-tray.about');
+            headerBar.pack_end(new Gtk.MenuButton({
+                icon_name: 'open-menu-symbolic',
+                menu_model: menu,
+                primary: true,
+                tooltip_text: 'Main Menu',
+            }));
+            return;
+        }
+
+        // A future libadwaita might restructure the window so the header bar
+        // can't be found. Keep About reachable from a row rather than losing it.
+        const aboutGroup = new Adw.PreferencesGroup();
+        const aboutRow = new Adw.ActionRow({
+            title: 'About Status Tray',
+            activatable: true,
+            action_name: 'status-tray.about',
+        });
+        aboutRow.add_suffix(new Gtk.Image({
+            icon_name: 'go-next-symbolic',
+            valign: Gtk.Align.CENTER,
+        }));
+        aboutGroup.add(aboutRow);
+        fallbackPage.add(aboutGroup);
+    }
+
+    _showAbout() {
+        // The app icon ships as a file, and AdwAboutDialog only takes a name.
+        const iconsDir = GLib.build_filenamev([this.path, 'icons']);
+        const iconTheme = Gtk.IconTheme.get_for_display(this._window.get_display());
+        if (!(iconTheme.get_search_path() ?? []).includes(iconsDir))
+            iconTheme.add_search_path(iconsDir);
+
+        new Adw.AboutDialog({
+            application_name: this.metadata.name,
+            application_icon: 'status-tray',
+            developer_name: 'Keith Vassallo',
+            version: this.metadata['version-name'] ?? `${this.metadata.version}`,
+            comments: 'Automatic system tray for StatusNotifierItem apps',
+            website: this.metadata.url,
+            issue_url: `${this.metadata.url}/issues`,
+            license_type: Gtk.License.GPL_3_0_ONLY,
+        }).present(this._window);
     }
 
     _subscribeToSignals() {

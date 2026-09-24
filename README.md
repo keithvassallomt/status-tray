@@ -90,6 +90,11 @@ Access settings through GNOME Extensions app or by running:
 gnome-extensions prefs status-tray@keithvassallo.com
 ```
 
+Preferences are split into three pages: **Apps** lists your tray apps,
+**Appearance** covers how icons look and where they sit, and **Behaviour**
+covers clicking, the keyboard shortcut and overflow. About Status Tray is in the
+main menu.
+
 ![Preferences window](assets/screenshot-prefs.png)
 
 ### Icon Mode
@@ -105,9 +110,9 @@ Choose how tray icons are displayed:
 
 ### Icon Size
 
-Set the size of tray icons in the panel with the **Icon Size** slider, from 14
-to 20 pixels (default 16). Panel icons and the overflow button resize
-immediately.
+Set the size of tray icons in the panel with the **Size** slider on the
+Appearance page, from 14 to 20 pixels (default 16). Panel icons and the
+overflow button resize immediately.
 
 ### Padding Between Icons
 
@@ -117,7 +122,7 @@ neighbouring icons.
 
 ### Icon Interaction
 
-Choose what clicking a tray icon does:
+Choose what clicking a tray icon does with **Click action** on the Behaviour page:
 
 | Mode | Behaviour |
 |------|-----------|
@@ -147,20 +152,20 @@ Override any app's icon with a system icon or custom image:
 
 ### Panel Overflow
 
-Tight on panel space? Enable **Panel Overflow** from preferences to keep only
-the first *N* tray icons inline; the rest collapse under a single overflow
+Tight on panel space? Turn on **Enable overflow** on the Behaviour page to keep
+only the first *N* tray icons inline; the rest collapse under a single overflow
 button at the right of the tray. Click it to get a menu that lists each
 collapsed app, with each app's full menu available inline as a submenu.
 
-- **Enable overflow icon** - Turn the feature on or off (disabled by default)
-- **Overflow button icon** - Keep the static tray glyph (default), show a
+- **Enable overflow** - Turn the feature on or off (disabled by default)
+- **Button icon** - Keep the static tray glyph (default), show a
   dynamic preview of up to 4 hidden icons in colour or in monochrome, or set
   your own custom icon (a theme icon or an image file)
 - **Inline icon limit** - Choose how many icons stay directly in the panel
   (0-20) before the rest overflow. Set it to 0 to keep every tray item in the
   overflow menu.
 
-The static glyph honours the global Icon Style setting. The dynamic previews
+The static glyph honours the global Icon style setting. The dynamic previews
 set their own colour treatment (colour or monochrome) independently of it; the
 monochrome preview adds a separating outline so overlapping icons stay legible.
 
