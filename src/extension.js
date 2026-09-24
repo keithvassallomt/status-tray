@@ -295,27 +295,14 @@ const WATCHER_BUS_NAME = 'org.kde.StatusNotifierWatcher';
 const WATCHER_OBJECT_PATH = '/StatusNotifierWatcher';
 const DEFAULT_ITEM_OBJECT_PATH = '/StatusNotifierItem';
 
-// Well-known name an app takes for its item before registering it. The spec
-// says org.kde.StatusNotifierItem-PID-ID, but Electron apps use an
-// org.freedesktop one (Ferdium: org.freedesktop.StatusNotifierItem-2-1), so
-// both namespaces have to be watched. Seeing the name lets us pick up apps
-// that gave up on RegisterStatusNotifierItem because we weren't there yet.
-const SNI_WELL_KNOWN_NAMESPACES = ['org.kde', 'org.freedesktop'];
-const SNI_WELL_KNOWN_NAME_RE = /^org\.(kde|freedesktop)\.StatusNotifierItem-/;
-
 // Probes run while the login storm is still settling, so allow more than a
 // quiet round trip before writing a connection off as having no item.
 const SNI_PROBE_TIMEOUT_MS = 3000;
 
-// Sweeps for items that appeared before we owned the watcher name. gnome-session
-// launches autostart apps before extensions are enabled, and a cold-starting
-// Discord or Dropbox can take tens of seconds to export its item.
-const SNI_RESCAN_DELAYS_MS = [2000, 5000, 15000, 30000, 60000];
-
-// Bounds on the object-tree walk, so a service with a large tree can't turn a
-// sweep into hundreds of D-Bus calls.
-const INTROSPECT_MAX_DEPTH = 4;
-const INTROSPECT_MAX_CALLS_PER_NAME = 16;
+// Sweeps for items that appeared before we owned the watcher name.
+// gnome-session launches autostart apps before extensions are enabled, so a
+// cold-starting app can export its item well after we are up.
+const SNI_RESCAN_DELAYS_MS = [5000, 30000];
 
 // D-Bus well-known name grammar: elements use [A-Za-z0-9_-]. Hyphens are
 // required for canonical SNI names like `org.kde.StatusNotifierItem-PID-ID`.
@@ -2458,10 +2445,8 @@ class StatusNotifierWatcher {
         this._healthCheckTimeoutId = 0;
         this._pendingDelayIds = new Set();
         this._rescanTimeoutIds = new Set();
-        this._sniNameWatchIds = [];
         this._ownNameId = 0;
         this._ownNameWatchId = 0;
-        this._walkedBusNames = new Set();
 
         const nodeInfo = Gio.DBusNodeInfo.new_for_xml(SNW_INTERFACE_XML);
         const ifaceInfo = nodeInfo.lookup_interface('org.kde.StatusNotifierWatcher');
@@ -2480,7 +2465,6 @@ class StatusNotifierWatcher {
 
         this._seekExistingItems();
         this._scheduleRescans();
-        this._watchForSNINames();
 
         // Schedule a delayed health check for items discovered above.
         // After suspend/resume, GNOME Shell disables and re-enables extensions,
@@ -2549,18 +2533,6 @@ class StatusNotifierWatcher {
             e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED);
     }
 
-    // A peer that never answered may simply have been busy; one that answered
-    // with an error has told us something that won't change.
-    _isTransient(e) {
-        if (!(e instanceof GLib.Error))
-            return false;
-
-        return e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.TIMED_OUT) ||
-            e.matches(Gio.DBusError, Gio.DBusError.NO_REPLY) ||
-            e.matches(Gio.DBusError, Gio.DBusError.TIMEOUT) ||
-            e.matches(Gio.DBusError, Gio.DBusError.TIMED_OUT);
-    }
-
     _busCall(name, objectPath, iface, method, params, replyType, timeoutMs) {
         return new Promise((resolve, reject) => {
             Gio.DBus.session.call(
@@ -2595,46 +2567,6 @@ class StatusNotifierWatcher {
                 return GLib.SOURCE_REMOVE;
             });
             this._rescanTimeoutIds.add(id);
-        }
-    }
-
-    // An app that failed to register still takes its well-known name and keeps
-    // the item exported, so the name appearing is our cue to go looking —
-    // however late the app starts. Matched by namespace so the bus filters for
-    // us rather than waking us for every name change on the session bus.
-    _watchForSNINames() {
-        for (const namespace of SNI_WELL_KNOWN_NAMESPACES) {
-            const id = Gio.DBus.session.signal_subscribe(
-                'org.freedesktop.DBus',
-                'org.freedesktop.DBus',
-                'NameOwnerChanged',
-                '/org/freedesktop/DBus',
-                namespace,
-                Gio.DBusSignalFlags.MATCH_ARG0_NAMESPACE,
-                (conn, sender, path, iface, signal, params) => {
-                    const [name, , newOwner] = params.deep_unpack();
-                    if (!newOwner || !SNI_WELL_KNOWN_NAME_RE.test(name))
-                        return;
-
-                    debug(`SNI name appeared: ${name} (owner ${newOwner})`);
-                    // Let the app finish exporting, and let its own
-                    // registration win the race if it makes one —
-                    // _registerIfNew dedupes either way, since registrations
-                    // resolve to the same unique name.
-                    this._probeAfterDelay(newOwner, 1000);
-                }
-            );
-            this._sniNameWatchIds.push(id);
-        }
-    }
-
-    async _probeAfterDelay(busName, ms) {
-        try {
-            await this._delay(ms);
-            await this._discoverItemsOn(busName);
-        } catch (e) {
-            if (!this._isCancelled(e))
-                debug(`Probe of ${busName} failed: ${e.message}`);
         }
     }
 
@@ -2692,29 +2624,13 @@ class StatusNotifierWatcher {
         if (await this._checkForSNI(busName, DEFAULT_ITEM_OBJECT_PATH))
             return;
 
-        if (this._walkedBusNames.has(busName))
-            return;
-
-        const walk = {calls: 0, retryable: false};
-        const paths = await this._introspectForSNI(busName, '/', 0, walk);
-
-        // A connection that didn't answer gets another go next sweep: on a cold
-        // boot an app can be too busy to reply at 2s and perfectly responsive
-        // at 30s. One that answered "no such interface" won't change its mind.
-        if (!walk.retryable)
-            this._walkedBusNames.add(busName);
+        const paths = await this._introspectForSNI(busName, '/');
 
         for (const objectPath of paths)
             this._registerIfNew(busName, objectPath);
     }
 
-    async _introspectForSNI(busName, objectPath, depth, walk) {
-        if (depth > INTROSPECT_MAX_DEPTH ||
-            walk.calls >= INTROSPECT_MAX_CALLS_PER_NAME)
-            return [];
-
-        walk.calls++;
-
+    async _introspectForSNI(busName, objectPath) {
         let nodeInfo;
         try {
             const result = await this._busCall(
@@ -2730,10 +2646,6 @@ class StatusNotifierWatcher {
             nodeInfo = Gio.DBusNodeInfo.new_for_xml(xml);
         } catch (e) {
             // Not introspectable, nothing at this path, or malformed XML.
-            if (depth === 0 && this._isTransient(e)) {
-                walk.retryable = true;
-                debug(`Could not introspect ${busName}: ${e.message}`);
-            }
             return [];
         }
 
@@ -2747,7 +2659,7 @@ class StatusNotifierWatcher {
             // Child names are relative, but some services emit absolute ones.
             const childPath = node.path.startsWith('/')
                 ? node.path : `${prefix}/${node.path}`;
-            return this._introspectForSNI(busName, childPath, depth + 1, walk);
+            return this._introspectForSNI(busName, childPath);
         }));
 
         return paths.concat(...children);
@@ -2969,7 +2881,7 @@ class StatusNotifierWatcher {
         debug(`Registering item: busName=${busName}, objectPath=${objectPath}`);
 
         try {
-            this._reregisterItem(busName, objectPath);
+            this._registerItemInternal(busName, objectPath);
             invocation.return_value(null);
         } catch (e) {
             debug(`Failed to register item: ${e.message}`);
@@ -3016,21 +2928,6 @@ class StatusNotifierWatcher {
             objectPath: itemInfo.objectPath,
             appId: itemInfo.appId,
         };
-    }
-
-    // An app registering something we already hold is telling us its item has
-    // been rebuilt, so rebuild ours rather than keep a proxy pointed at the old
-    // one. Discovery arrives through _registerIfNew instead, which stays a
-    // no-op for items we already have.
-    _reregisterItem(busName, objectPath) {
-        const uniqueId = `${busName}${objectPath}`;
-
-        if (this._items.has(uniqueId)) {
-            debug(`Re-registration of ${uniqueId}, rebuilding it`);
-            this._unregisterItem(uniqueId);
-        }
-
-        this._registerItemInternal(busName, objectPath);
     }
 
     _registerItemInternal(busName, objectPath) {
@@ -3151,12 +3048,6 @@ class StatusNotifierWatcher {
         for (const id of this._rescanTimeoutIds)
             GLib.source_remove(id);
         this._rescanTimeoutIds.clear();
-
-        this._walkedBusNames.clear();
-
-        for (const id of this._sniNameWatchIds)
-            Gio.DBus.session.signal_unsubscribe(id);
-        this._sniNameWatchIds = [];
 
         if (this._ownNameWatchId) {
             Gio.DBus.session.signal_unsubscribe(this._ownNameWatchId);
