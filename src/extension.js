@@ -2445,8 +2445,6 @@ class StatusNotifierWatcher {
         this._healthCheckTimeoutId = 0;
         this._pendingDelayIds = new Set();
         this._rescanTimeoutIds = new Set();
-        this._ownNameId = 0;
-        this._ownNameWatchId = 0;
 
         const nodeInfo = Gio.DBusNodeInfo.new_for_xml(SNW_INTERFACE_XML);
         const ifaceInfo = nodeInfo.lookup_interface('org.kde.StatusNotifierWatcher');
@@ -2458,57 +2456,6 @@ class StatusNotifierWatcher {
             debug('StatusNotifierWatcher exported on D-Bus');
         } catch (e) {
             debug(`Failed to export StatusNotifierWatcher: ${e.message}`);
-        }
-
-        this._watchOwnName();
-        this._ownName();
-
-        this._seekExistingItems();
-        this._scheduleRescans();
-
-        // Schedule a delayed health check for items discovered above.
-        // After suspend/resume, GNOME Shell disables and re-enables extensions,
-        // so this constructor runs fresh each time. Stale Flatpak xdg-dbus-proxy
-        // zombies often respond to initial property queries but break within
-        // seconds — the delay gives them time to fail before we test.
-        // At normal login this is harmless: all items pass the check.
-        this._healthCheckTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 8000, () => {
-            this._healthCheckTimeoutId = 0;
-            this._healthCheckAllItems();
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    // unown_name() reports nothing when it completes, so a disable followed by
-    // an enable (which the shell does on every lock and unlock) can have the
-    // old instance's ReleaseName arrive after the new instance's RequestName.
-    // Both run on the shell's one connection, so the late release takes the
-    // name back off us and we are left exported, owning nothing, with no
-    // watcher on the bus at all until someone toggles the extension. Watching
-    // the name lets us take it again the moment it falls free.
-    _watchOwnName() {
-        this._ownNameWatchId = Gio.DBus.session.signal_subscribe(
-            'org.freedesktop.DBus',
-            'org.freedesktop.DBus',
-            'NameOwnerChanged',
-            '/org/freedesktop/DBus',
-            WATCHER_BUS_NAME,
-            Gio.DBusSignalFlags.NONE,
-            (conn, sender, path, iface, signal, params) => {
-                const [, , newOwner] = params.deep_unpack();
-                if (newOwner !== '' || this._cancellable.is_cancelled())
-                    return;
-
-                debug(`${WATCHER_BUS_NAME} went unowned, reclaiming it`);
-                this._ownName();
-            }
-        );
-    }
-
-    _ownName() {
-        if (this._ownNameId) {
-            Gio.DBus.session.unown_name(this._ownNameId);
-            this._ownNameId = 0;
         }
 
         this._ownNameId = Gio.DBus.session.own_name(
@@ -2526,6 +2473,21 @@ class StatusNotifierWatcher {
                 debug(`Lost bus name: ${WATCHER_BUS_NAME}`);
             }
         );
+
+        this._seekExistingItems();
+        this._scheduleRescans();
+
+        // Schedule a delayed health check for items discovered above.
+        // After suspend/resume, GNOME Shell disables and re-enables extensions,
+        // so this constructor runs fresh each time. Stale Flatpak xdg-dbus-proxy
+        // zombies often respond to initial property queries but break within
+        // seconds — the delay gives them time to fail before we test.
+        // At normal login this is harmless: all items pass the check.
+        this._healthCheckTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 8000, () => {
+            this._healthCheckTimeoutId = 0;
+            this._healthCheckAllItems();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _isCancelled(e) {
@@ -2613,10 +2575,6 @@ class StatusNotifierWatcher {
     // walking the object tree for the ones that don't (Ayatana's
     // /org/ayatana/NotificationItem/<id>, Chromium's own path), which a probe
     // of a single hardcoded path can never see.
-    //
-    // The walk is the expensive half, so each connection gets one. Repeat
-    // sweeps still probe the default path — what they're really looking for is
-    // connections that weren't there last time, and those are unwalked.
     async _discoverItemsOn(busName) {
         if (this._cancellable.is_cancelled())
             return;
@@ -2665,9 +2623,11 @@ class StatusNotifierWatcher {
         return paths.concat(...children);
     }
 
+    // A tree walk can still be settling when disable() cancels it, and the
+    // paths it found beforehand come back afterwards.
     _registerIfNew(busName, objectPath) {
         const uniqueId = `${busName}${objectPath}`;
-        if (this._items.has(uniqueId))
+        if (this._cancellable.is_cancelled() || this._items.has(uniqueId))
             return;
 
         debug(`Found existing SNI: ${uniqueId}`);
@@ -3049,11 +3009,6 @@ class StatusNotifierWatcher {
             GLib.source_remove(id);
         this._rescanTimeoutIds.clear();
 
-        if (this._ownNameWatchId) {
-            Gio.DBus.session.signal_unsubscribe(this._ownNameWatchId);
-            this._ownNameWatchId = 0;
-        }
-
         try {
             this._dbusImpl.emit_signal('StatusNotifierHostUnregistered', null);
         } catch (e) {
@@ -3085,13 +3040,9 @@ export default class StatusTrayExtension extends Extension {
 
         this._reorderTimeoutId = null;
 
-        // Claim org.kde.StatusNotifierWatcher before anything else in here.
-        // Apps that look for it at login and don't find it give up for good —
-        // Discord, Dropbox and KeePassXC tear their item down rather than
-        // retry — and the shell enables extensions one after another, so
-        // whatever we do first is time the whole session is waiting on. Only
-        // the state _onItemRegistered reads has to exist by now; discovery is
-        // async, so nothing calls back before enable() returns.
+        // Claim the watcher name early, since apps starting alongside the shell
+        // may look for it only once. Discovery is async, so nothing reaches
+        // _onItemRegistered before enable() returns.
         this._watcher = new StatusNotifierWatcher(this);
 
         this._settings.connectObject(
