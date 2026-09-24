@@ -2,5 +2,8 @@ dev/
 src/schemas/gschemas.compiled
 .shexli-venv/
 
+# Build artifact produced by package.sh
+/status-tray@keithvassallo.com.zip
+
 # Brainstorming visual-companion mockups
 .superpowers/
