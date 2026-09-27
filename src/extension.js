@@ -1282,16 +1282,10 @@ const TrayItem = GObject.registerClass({
     // This prevents ghost artifacts from previous icon modes without
     // causing a blank frame by clearing the active source first.
     _clearIconExcept(activeSource) {
-        if (activeSource !== 'content') {
-            this._icon.content = null;
-            this._icon.content_gravity = Clutter.ContentGravity.CENTER;
-        }
         if (activeSource !== 'gicon')
             this._icon.gicon = null;
         if (activeSource !== 'icon_name')
             this._icon.icon_name = null;
-        if (activeSource === 'icon_name')
-            this._icon.set_size(-1, -1);
     }
 
     // Destroy and recreate the St.Icon widget to guarantee a clean state.
@@ -1435,15 +1429,9 @@ const TrayItem = GObject.registerClass({
     }
 
     _applyIconSize() {
-        // Content/pixmap icons size via explicit width/height, which icon-size
-        // CSS won't change; resize the actor directly without re-looking-up the
-        // icon (see _refreshIcons' stale-path note). Themed icons resize via
-        // the icon-size CSS that _applySymbolicStyle sets.
-        if (this._icon.content) {
-            const scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-            const scaledSize = this._settings.get_int('icon-size') * scaleFactor;
-            this._icon.set_size(scaledSize, scaledSize);
-        }
+        // Every icon source, pixmaps included, resizes via the icon-size CSS
+        // that _applySymbolicStyle sets, so there's no need to re-look-up the
+        // icon (see _refreshIcons' stale-path note).
         this._applySymbolicStyle();
     }
 
@@ -1532,17 +1520,13 @@ const TrayItem = GObject.registerClass({
                     );
                 }
 
-                const scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-                const scaledSize = this._settings.get_int('icon-size') * scaleFactor;
-
-                this._icon.set({
-                    content: imageContent,
-                    width: scaledSize,
-                    height: scaledSize,
-                    content_gravity: Clutter.ContentGravity.RESIZE_ASPECT,
-                });
-
-                this._clearIconExcept('content');
+                // St.ImageContent is a GIcon, so hand it over as one and let
+                // St.Icon size it like every themed icon. Setting it as the
+                // actor's content instead needs an explicit width, which
+                // overrides the panel's .system-status-icon padding and leaves
+                // pixmap icons in a slot 12px narrower than the rest (#29).
+                this._icon.set_gicon(imageContent);
+                this._clearIconExcept('gicon');
 
                 this._applySymbolicStyle();
                 debug(`Set IconPixmap via St.ImageContent for ${this._busName}`);
@@ -2232,7 +2216,9 @@ class OverflowButton extends PanelMenu.Button {
             // icons aren't flatly recolourable and are already desaturated in
             // monochrome mode, so the merge is milder for them.
             const src = items[i]._icon;
-            const recolourable = !!(src && (src.get_gicon() || src.icon_name));
+            const srcGicon = src?.get_gicon();
+            const recolourable = !!src &&
+                (!!src.icon_name || (!!srcGicon && !(srcGicon instanceof St.ImageContent)));
             if (withHalo && recolourable) {
                 const haloSize = size + Math.round(OVERFLOW_PREVIEW_HALO_MARGIN * scale);
                 const inset = Math.round(OVERFLOW_PREVIEW_HALO_INSET * scale);
@@ -2362,12 +2348,13 @@ class OverflowButton extends PanelMenu.Button {
             return;
 
         // Reset every potential source so switching between branches (e.g.
-        // pixmap → named icon on refresh) doesn't leave stale state behind.
+        // gicon → named icon on refresh) doesn't leave stale state behind.
         targetIcon.gicon = null;
         targetIcon.icon_name = null;
-        targetIcon.content = null;
-        targetIcon.set_size(-1, -1);
 
+        // Pixmap-backed icons (Electron/Flatpak apps, IconPixmap fallback)
+        // arrive here as an St.ImageContent gicon, which is shareable across
+        // actors, so they take the gicon branch like any other.
         let sourceApplied = false;
         const gicon = src.get_gicon();
         if (gicon) {
@@ -2375,22 +2362,6 @@ class OverflowButton extends PanelMenu.Button {
             sourceApplied = true;
         } else if (src.icon_name) {
             targetIcon.set_icon_name(src.icon_name);
-            sourceApplied = true;
-        } else if (src.content) {
-            // Pixmap-backed icons (Electron/Flatpak apps, IconPixmap fallback)
-            // live on _icon.content as an St.ImageContent — gicon and icon_name
-            // are both null. Clutter.Content is shareable across actors, so
-            // mirror it onto the menu row. Explicit size is required because
-            // Clutter.Content has no intrinsic size when assigned via the
-            // content property.
-            const scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-            const scaledSize = iconSize * scaleFactor;
-            targetIcon.set({
-                content: src.content,
-                width: scaledSize,
-                height: scaledSize,
-                content_gravity: Clutter.ContentGravity.RESIZE_ASPECT,
-            });
             sourceApplied = true;
         }
 
