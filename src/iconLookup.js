@@ -14,9 +14,9 @@ import GLib from 'gi://GLib';
 let _themeChainCache = null;
 let _themeChainPromise = null;
 
-function _loadContentsAsync(file) {
+function _loadContentsAsync(file, cancellable = null) {
     return new Promise((resolve, reject) => {
-        file.load_contents_async(null, (f, res) => {
+        file.load_contents_async(cancellable, (f, res) => {
             try {
                 resolve(f.load_contents_finish(res));
             } catch (e) {
@@ -200,13 +200,69 @@ export function extractFlatpakAppId(iconThemePath) {
     return match ? match[1] : null;
 }
 
+// Whether a path is inside a Flatpak app's /app, which only exists within its
+// sandbox.
+export function isSandboxAppPath(path) {
+    return path === '/app' || !!path?.startsWith('/app/');
+}
+
+// A Flatpak app reports its IconThemePath (or an absolute IconName) as it sees
+// it inside its sandbox, where /app is the app's own files. On the host those
+// live in the app's deploy directory, `appPath` (see readFlatpakAppPath).
+function _hostPath(path, appPath) {
+    return appPath && isSandboxAppPath(path) ? appPath + path.slice('/app'.length) : path;
+}
+
+// Where a Flatpak app's /app lives on the host, for the app owning D-Bus
+// connection `busName`, or null if it isn't a Flatpak app. Every Flatpak
+// sandbox carries a /.flatpak-info whose [Instance] app-path records it, and
+// /proc/<pid>/root shows the host that file, which is how the desktop portals
+// identify Flatpak apps too. The connection may belong to the app's
+// xdg-dbus-proxy rather than the app, but the proxy's sandbox carries the same
+// file.
+export async function readFlatpakAppPath(busName, cancellable = null) {
+    try {
+        const [pid] = await new Promise((resolve, reject) => {
+            Gio.DBus.session.call(
+                'org.freedesktop.DBus',
+                '/org/freedesktop/DBus',
+                'org.freedesktop.DBus',
+                'GetConnectionUnixProcessID',
+                new GLib.Variant('(s)', [busName]),
+                new GLib.VariantType('(u)'),
+                Gio.DBusCallFlags.NONE,
+                -1,
+                cancellable,
+                (conn, res) => {
+                    try {
+                        resolve(conn.call_finish(res).deep_unpack());
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+        });
+        const file = Gio.File.new_for_path(`/proc/${pid}/root/.flatpak-info`);
+        const [, contents] = await _loadContentsAsync(file, cancellable);
+        const keyFile = new GLib.KeyFile();
+        keyFile.load_from_bytes(new GLib.Bytes(contents), GLib.KeyFileFlags.NONE);
+        return keyFile.get_string('Instance', 'app-path') || null;
+    } catch {
+        // No /.flatpak-info (not a Flatpak app), or the connection has gone.
+        return null;
+    }
+}
+
 // The icon file for an SNI IconName, searched in the order the tray always
 // has: the name itself when it's an absolute path to a file that exists;
 // then, if the app supplies an IconThemePath, that directory followed by the
 // Flatpak app's own exported icon; otherwise the host icon theme. Null when
 // none of those has it. Callers follow a miss with their own toolkit's
 // theme lookup and the IconPixmap fallback, which this module can't do.
-export function resolveIconFile(iconName, iconThemePath, themeName) {
+// `appPath`, from readFlatpakAppPath, maps sandbox /app paths to the host.
+export function resolveIconFile(iconName, iconThemePath, themeName, appPath = null) {
+    iconName = _hostPath(iconName, appPath);
+    iconThemePath = _hostPath(iconThemePath, appPath);
+
     if (iconName.startsWith('/') && Gio.File.new_for_path(iconName).query_exists(null))
         return iconName;
 

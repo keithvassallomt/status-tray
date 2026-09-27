@@ -31,8 +31,10 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import {
     extractFlatpakAppId,
     findIconInTheme,
+    isSandboxAppPath,
     isSymbolicIconFileName,
     precomputeThemeChain,
+    readFlatpakAppPath,
     resetThemeChain,
     resolveIconFile,
 } from './iconLookup.js';
@@ -322,6 +324,8 @@ const TrayItem = GObject.registerClass({
         this._tempFilePath = null;
         this._fallbackOverrideIcon = null;
         this._isPassive = false;
+        // Host location of a Flatpak app's /app; see _resolveFlatpakAppPath.
+        this._flatpakAppPath = null;
 
         // Bumped whenever an icon refresh starts.  Async icon fetches capture
         // it and drop their reply if a newer refresh has begun since, so a
@@ -346,6 +350,7 @@ const TrayItem = GObject.registerClass({
         this._clickGesture?.set_enabled(false);
 
         this._initProxy();
+        this._resolveFlatpakAppPath();
 
         // GNOME Shell won't open an empty menu, so add a placeholder
         this._loadingItem = new PopupMenu.PopupMenuItem('Loading...', {
@@ -453,6 +458,23 @@ const TrayItem = GObject.registerClass({
         } catch (e) {
             debug(`Failed to initialize proxy for ${this._busName}: ${e.message}`);
             this._connectToSNIFallback();
+        }
+    }
+
+    // A Flatpak app can name its IconThemePath (or an absolute IconName) under
+    // its sandbox's /app, which the host can't see. Find where that /app lives
+    // on the host so the icon search can follow it, and redo the icon if it
+    // was waiting on this.
+    async _resolveFlatpakAppPath() {
+        const appPath = await readFlatpakAppPath(this._busName, this._cancellable);
+        if (!appPath || !this._cancellable || this._cancellable.is_cancelled())
+            return;
+
+        this._flatpakAppPath = appPath;
+        const iconName = this._proxy?.get_cached_property('IconName')?.deep_unpack();
+        if (isSandboxAppPath(this._iconThemePath) || isSandboxAppPath(iconName)) {
+            debug(`Flatpak /app for ${this._busName} is ${appPath}, refreshing icon`);
+            this._updateIcon();
         }
     }
 
@@ -1110,8 +1132,8 @@ const TrayItem = GObject.registerClass({
 
         // The file search is shared with preferences (iconLookup.js), so the
         // app list and the effect preview find the same icon as the panel.
-        const iconPath = resolveIconFile(
-            iconName, this._iconThemePath, St.Settings.get().gtk_icon_theme);
+        const iconPath = resolveIconFile(iconName, this._iconThemePath,
+            St.Settings.get().gtk_icon_theme, this._flatpakAppPath);
         if (iconPath) {
             debug(`Using icon file: ${iconPath}`);
             const file = Gio.File.new_for_path(iconPath);

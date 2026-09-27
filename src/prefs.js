@@ -13,6 +13,7 @@ import {
     findIconInTheme,
     isSymbolicIconFileName,
     precomputeThemeChain,
+    readFlatpakAppPath,
     resetThemeChain,
     resolveIconFile,
 } from './iconLookup.js';
@@ -155,6 +156,7 @@ class AppRow extends Adw.ActionRow {
         this._currentIconName = null;
         this._iconThemePath = null;
         this._iconSource = null;
+        this._flatpakAppPath = null;
 
         this._dragHandle = new Gtk.Image({
             icon_name: 'list-drag-handle-symbolic',
@@ -304,13 +306,17 @@ class AppRow extends Adw.ActionRow {
         this._bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
 
         try {
-            const [idReply, titleReply, iconNameReply, iconThemePathReply, toolTipReply] = await Promise.all([
+            const [idReply, titleReply, iconNameReply, iconThemePathReply, toolTipReply, flatpakAppPath] = await Promise.all([
                 this._dbusGetProperty(this._bus, 'Id'),
                 this._dbusGetProperty(this._bus, 'Title'),
                 this._dbusGetProperty(this._bus, 'IconName'),
                 this._dbusGetProperty(this._bus, 'IconThemePath'),
                 this._dbusGetProperty(this._bus, 'ToolTip'),
+                readFlatpakAppPath(this._busName),
             ]);
+            // Host location of a Flatpak app's /app, for icon paths it names
+            // inside its sandbox.
+            this._flatpakAppPath = flatpakAppPath;
 
             const id = idReply ? idReply.deep_unpack() : null;
             const title = titleReply ? titleReply.deep_unpack() : null;
@@ -434,7 +440,8 @@ class AppRow extends Adw.ActionRow {
             return;
         }
 
-        const path = resolveIconFile(iconName, this._iconThemePath, getIconThemeName());
+        const path = resolveIconFile(iconName, this._iconThemePath, getIconThemeName(),
+            this._flatpakAppPath);
         if (path) {
             this._setIconFromPath(path);
             return;
