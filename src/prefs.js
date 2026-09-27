@@ -8,6 +8,15 @@ import Gtk from 'gi://Gtk';
 
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
+import {
+    extractFlatpakAppId,
+    findIconInTheme,
+    isSymbolicIconFileName,
+    precomputeThemeChain,
+    resetThemeChain,
+    resolveIconFile,
+} from './iconLookup.js';
+
 const DEBUG = false;
 function debug(msg) {
     if (DEBUG)
@@ -83,10 +92,10 @@ function normalizeToolTipId(toolTipTitle) {
     return toolTipTitle;
 }
 
-function extractFlatpakAppId(iconThemePath) {
-    if (!iconThemePath) return null;
-    const match = iconThemePath.match(/\/run\/user\/\d+\/app\/([^/]+)/);
-    return match ? match[1] : null;
+// The host icon theme, as the shell reads it (St.Settings' gtk-icon-theme is
+// this same setting), for the icon search shared with the tray.
+function getIconThemeName() {
+    return new Gio.Settings({ schema_id: 'org.gnome.desktop.interface' }).get_string('icon-theme');
 }
 
 // Move per-app settings entries from an old appId key to a new one across
@@ -145,6 +154,7 @@ class AppRow extends Adw.ActionRow {
         this._displayName = appId;
         this._currentIconName = null;
         this._iconThemePath = null;
+        this._iconSource = null;
 
         this._dragHandle = new Gtk.Image({
             icon_name: 'list-drag-handle-symbolic',
@@ -399,138 +409,127 @@ class AppRow extends Adw.ActionRow {
         }
     }
 
+    // Resolve the icon the way the tray does (TrayItem._updateIcon and
+    // _setIcon), sharing its file search through iconLookup.js, so the list
+    // shows what the panel shows. The effect dialog previews whatever this
+    // settles on (this._iconSource) instead of looking the icon up again.
     _updateIcon() {
         const overrides = this._settings.get_value('icon-overrides').deep_unpack();
         const overrideIcon = overrides[this._appId];
+        const fallbackOnly = !!overrideIcon &&
+            this._settings.get_strv('icon-fallback-overrides').includes(this._appId);
 
-        if (overrideIcon) {
-            if (overrideIcon.startsWith('/')) {
+        if (overrideIcon && !fallbackOnly) {
+            if (overrideIcon.startsWith('/'))
                 this._setIconFromPath(overrideIcon);
-            } else {
-                this._iconImage.set_from_icon_name(overrideIcon);
-            }
+            else
+                this._setIconSource({ iconName: overrideIcon });
             return;
         }
 
-        if (!this._currentIconName) {
-            this._fetchIconPixmap();
+        // A fallback-only override stands in when the app gives no IconName.
+        const iconName = this._currentIconName || (fallbackOnly ? overrideIcon : null);
+        if (!iconName) {
+            this._fetchIconPixmap(null, true);
             return;
         }
 
-        if (this._currentIconName.startsWith('/')) {
-            this._setIconFromPath(this._currentIconName);
+        const path = resolveIconFile(iconName, this._iconThemePath, getIconThemeName());
+        if (path) {
+            this._setIconFromPath(path);
             return;
         }
 
-        if (this._iconThemePath && this._iconThemePath.length > 0) {
-            const possiblePaths = [
-                `${this._iconThemePath}/${this._currentIconName}.png`,
-                `${this._iconThemePath}/${this._currentIconName}.svg`,
-                `${this._iconThemePath}/hicolor/22x22/apps/${this._currentIconName}.png`,
-                `${this._iconThemePath}/hicolor/24x24/apps/${this._currentIconName}.png`,
-                `${this._iconThemePath}/hicolor/32x32/apps/${this._currentIconName}.png`,
-            ];
-
-            for (const path of possiblePaths) {
-                const file = Gio.File.new_for_path(path);
-                if (file.query_exists(null)) {
-                    debug(`Found icon file at: ${path}`);
-                    this._setIconFromPath(path);
-                    return;
-                }
-            }
-        }
-
-        let iconTheme;
-        try {
-            const display = this._iconButton.get_display();
-            if (display) {
-                iconTheme = Gtk.IconTheme.get_for_display(display);
-            }
-        } catch (e) {
-            // Widget not yet realized
-        }
-
-        if (!iconTheme) {
-            const defaultDisplay = Gdk.Display.get_default();
-            if (defaultDisplay) {
-                iconTheme = Gtk.IconTheme.get_for_display(defaultDisplay);
-            }
-        }
-
-        if (iconTheme && iconTheme.has_icon(this._currentIconName)) {
-            this._iconImage.set_from_icon_name(this._currentIconName);
+        // An IconThemePath the search couldn't use is usually a sandboxed
+        // app's; like the tray, try its pixmap next, then the host theme.
+        if (this._iconThemePath) {
+            this._fetchIconPixmap(iconName, false);
             return;
         }
 
-        debug(`Icon ${this._currentIconName} not in theme, trying IconPixmap`);
-        this._fetchIconPixmap();
+        if (this._getIconTheme().has_icon(iconName)) {
+            this._setIconSource({ iconName });
+            return;
+        }
+
+        debug(`Icon ${iconName} not in theme, trying IconPixmap`);
+        this._fetchIconPixmap(iconName, true);
     }
 
-    async _fetchIconPixmap() {
-        if (!this._bus || !this._busName || !this._objectPath) {
-            this._iconImage.set_from_icon_name('application-x-executable-symbolic');
-            return;
-        }
+    _getIconTheme() {
+        return Gtk.IconTheme.get_for_display(this._iconButton.get_display());
+    }
 
-        try {
-            const pixmapReply = await this._dbusGetProperty(this._bus, 'IconPixmap');
-            if (!pixmapReply) {
-                debug(`No IconPixmap for ${this._appId}`);
-                this._iconImage.set_from_icon_name('application-x-executable-symbolic');
-                return;
-            }
+    // Show the app's IconPixmap. Without a usable one, fall back as the tray
+    // does: the host theme by name (unless the caller already searched it),
+    // then a generic icon.
+    async _fetchIconPixmap(iconName, skipThemeSearch) {
+        const pixmaps = await this._fetchValidPixmaps();
+        if (pixmaps.length > 0) {
+            try {
+                let bestPixmap = pixmaps[0];
+                let bestSize = bestPixmap[0];
+                const targetSize = 24;
 
-            const pixmaps = pixmapReply.deep_unpack();
-            if (!pixmaps || pixmaps.length === 0) {
-                debug(`Empty IconPixmap for ${this._appId}`);
-                this._iconImage.set_from_icon_name('application-x-executable-symbolic');
-                return;
-            }
-
-            let bestPixmap = pixmaps[0];
-            let bestSize = bestPixmap[0];
-            const targetSize = 24;
-
-            for (const pixmap of pixmaps) {
-                const width = pixmap[0];
-                if (width >= 16 && width <= 48) {
-                    if (Math.abs(width - targetSize) < Math.abs(bestSize - targetSize)) {
-                        bestPixmap = pixmap;
-                        bestSize = width;
+                for (const pixmap of pixmaps) {
+                    const width = pixmap[0];
+                    if (width >= 16 && width <= 48) {
+                        if (Math.abs(width - targetSize) < Math.abs(bestSize - targetSize)) {
+                            bestPixmap = pixmap;
+                            bestSize = width;
+                        }
                     }
                 }
+
+                const [width, height, pixelData] = bestPixmap;
+                debug(`Using IconPixmap ${width}x${height} for ${this._appId}`);
+
+                const rgbaData = this._argbToRgba(pixelData, width, height);
+                const pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
+                    rgbaData,
+                    GdkPixbuf.Colorspace.RGB,
+                    true,  // has_alpha
+                    8,     // bits_per_sample
+                    width,
+                    height,
+                    width * 4  // rowstride
+                );
+
+                const tempPath = GLib.build_filenamev([
+                    GLib.get_tmp_dir(),
+                    `status-tray-prefs-${this._appId.replace(/[^a-zA-Z0-9]/g, '_')}.png`,
+                ]);
+                pixbuf.savev(tempPath, 'png', [], []);
+
+                // Keep every size for the effect dialog's larger preview.
+                this._setIconFromPath(tempPath, pixmaps);
+                return;
+            } catch (e) {
+                debug(`Failed to use IconPixmap for ${this._appId}: ${e.message}`);
             }
-
-            const width = bestPixmap[0];
-            const height = bestPixmap[1];
-            const pixelData = bestPixmap[2];
-
-            debug(`Using IconPixmap ${width}x${height} for ${this._appId}`);
-
-            const rgbaData = this._argbToRgba(pixelData, width, height);
-            const pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
-                rgbaData,
-                GdkPixbuf.Colorspace.RGB,
-                true,  // has_alpha
-                8,     // bits_per_sample
-                width,
-                height,
-                width * 4  // rowstride
-            );
-
-            const tempPath = GLib.build_filenamev([
-                GLib.get_tmp_dir(),
-                `status-tray-prefs-${this._appId.replace(/[^a-zA-Z0-9]/g, '_')}.png`
-            ]);
-            pixbuf.savev(tempPath, 'png', [], []);
-
-            this._setIconFromPath(tempPath);
-
-        } catch (e) {
-            debug(`Failed to fetch IconPixmap for ${this._appId}: ${e.message}`);
-            this._iconImage.set_from_icon_name('application-x-executable-symbolic');
         }
+
+        const path = iconName && !skipThemeSearch
+            ? findIconInTheme(iconName, getIconThemeName())
+            : null;
+        if (path) {
+            this._setIconFromPath(path);
+            return;
+        }
+        if (iconName && this._getIconTheme().has_icon(iconName)) {
+            this._setIconSource({ iconName });
+            return;
+        }
+        this._setIconSource({ iconName: 'application-x-executable-symbolic' });
+    }
+
+    // Some apps return empty 0x0 pixmaps, or no IconPixmap property at all.
+    async _fetchValidPixmaps() {
+        if (!this._bus || !this._busName || !this._objectPath)
+            return [];
+        const reply = await this._dbusGetProperty(this._bus, 'IconPixmap');
+        const pixmaps = reply ? reply.deep_unpack() : [];
+        return pixmaps.filter(p => p[0] > 0 && p[1] > 0 && p[2].length > 0);
     }
 
     // IconPixmap uses big-endian ARGB, GdkPixbuf wants RGBA
@@ -556,14 +555,22 @@ class AppRow extends Adw.ActionRow {
         return GLib.Bytes.new(rgba);
     }
 
-    _setIconFromPath(path) {
-        const file = Gio.File.new_for_path(path);
-        if (file.query_exists(null)) {
-            const gicon = Gio.FileIcon.new(file);
-            this._iconImage.set_from_gicon(gicon);
-        } else {
-            this._iconImage.set_from_icon_name('application-x-executable-symbolic');
-        }
+    _setIconFromPath(path, pixmaps = null) {
+        if (Gio.File.new_for_path(path).query_exists(null))
+            this._setIconSource({ path, pixmaps });
+        else
+            this._setIconSource({ iconName: 'application-x-executable-symbolic' });
+    }
+
+    // What the row shows, kept for the effect dialog: a file `path` (with the
+    // app's `pixmaps` when the file is one written from them), or a themed
+    // `iconName`.
+    _setIconSource(source) {
+        this._iconSource = source;
+        if (source.path)
+            this._iconImage.set_from_gicon(Gio.FileIcon.new(Gio.File.new_for_path(source.path)));
+        else
+            this._iconImage.set_from_icon_name(source.iconName);
     }
 
     _dbusGetProperty(bus, propertyName) {
@@ -628,8 +635,7 @@ class AppRow extends Adw.ActionRow {
         const dialog = new IconEffectDialog(
             this._appId,
             this._displayName,
-            this._busName,
-            this._objectPath,
+            this._iconSource,
             this._settings,
             this._window
         );
@@ -1128,7 +1134,7 @@ const IconEffectDialog = GObject.registerClass({
         'effect-applied': {},
     },
 }, class IconEffectDialog extends Adw.Window {
-    _init(appId, displayName, busName, objectPath, settings, parentWindow) {
+    _init(appId, displayName, iconSource, settings, parentWindow) {
         super._init({
             title: `Effect Settings for ${displayName}`,
             modal: true,
@@ -1139,8 +1145,6 @@ const IconEffectDialog = GObject.registerClass({
         addEscapeToClose(this);
 
         this._appId = appId;
-        this._busName = busName;
-        this._objectPath = objectPath || '/StatusNotifierItem';
         this._settings = settings;
 
         // The preview's backdrop colours, for as long as this dialog is open.
@@ -1183,8 +1187,6 @@ const IconEffectDialog = GObject.registerClass({
         previewFrame.set_child(this._previewImage);
 
         this._originalPixbuf = null;
-
-        this._fetchIconFromDbus();
 
         const slidersGroup = new Adw.PreferencesGroup({
             title: 'Effect Parameters',
@@ -1279,7 +1281,8 @@ const IconEffectDialog = GObject.registerClass({
         applyButton.connect('clicked', () => this._applyChanges());
         buttonBox.append(applyButton);
 
-        this._updatePreview();
+        // Last: rendering the preview reads the sliders and tint row above.
+        this._loadPreviewSource(iconSource);
     }
 
     vfunc_close_request() {
@@ -1312,70 +1315,36 @@ const IconEffectDialog = GObject.registerClass({
         }
     }
 
-    async _fetchIconFromDbus() {
-        if (!this._busName) {
-            debug(`No bus name for effect dialog, using fallback icon`);
-            this._previewImage.set_from_icon_name('application-x-executable-symbolic');
-            return;
-        }
-
-        const bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
-
+    // Preview the icon the app list row settled on, which it resolves the
+    // same way the tray does, rather than looking it up again here.
+    _loadPreviewSource(source) {
         try {
-            const pixmapReply = await this._dbusGetProperty(bus, 'IconPixmap');
-            if (pixmapReply) {
-                const pixmaps = pixmapReply.deep_unpack();
-                // Check that we have valid pixmap data (some apps return empty 0x0 pixmaps)
-                const validPixmaps = pixmaps?.filter(p => p[0] > 0 && p[1] > 0 && p[2]?.length > 0);
-                if (validPixmaps && validPixmaps.length > 0) {
-                    debug(`IconEffectDialog: Got IconPixmap with ${validPixmaps.length} valid sizes for ${this._appId}`);
-                    this._setIconFromPixmap(validPixmaps);
-                    return;
-                }
+            if (source?.pixmaps) {
+                this._setIconFromPixmap(source.pixmaps);
+                return;
+            }
+            if (source?.path) {
+                this._isSymbolicIcon = isSymbolicIconFileName(GLib.path_get_basename(source.path));
+                this._setPreviewFromFile(source.path);
+                return;
             }
 
-            const iconNameReply = await this._dbusGetProperty(bus, 'IconName');
-            if (iconNameReply) {
-                const iconName = iconNameReply.deep_unpack();
-                if (iconName && iconName.length > 0) {
-                    debug(`IconEffectDialog: Got IconName "${iconName}" for ${this._appId}`);
-                    this._setIconFromName(iconName);
-                    return;
-                }
+            // A themed name the row found in the GTK icon theme. Use its
+            // file so the effects can be applied to the pixels.
+            const iconName = source?.iconName ?? 'application-x-executable-symbolic';
+            this._isSymbolicIcon = iconName.endsWith('-symbolic');
+            const paintable = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+                .lookup_icon(iconName, null, 64, 1, Gtk.TextDirection.NONE, 0);
+            const path = paintable.get_file()?.get_path();
+            if (path) {
+                this._setPreviewFromFile(path);
+                return;
             }
-
-            debug(`IconEffectDialog: No icon found for ${this._appId}`);
-            this._setIconFromName('application-x-executable-symbolic');
-
+            this._previewImage.set_from_icon_name(iconName);
         } catch (e) {
-            debug(`IconEffectDialog: Failed to fetch icon: ${e.message}`);
+            debug(`IconEffectDialog: Failed to load preview icon: ${e.message}`);
             this._previewImage.set_from_icon_name('application-x-executable-symbolic');
         }
-    }
-
-    _dbusGetProperty(bus, propertyName) {
-        return new Promise((resolve, _reject) => {
-            bus.call(
-                this._busName,
-                this._objectPath,
-                'org.freedesktop.DBus.Properties',
-                'Get',
-                new GLib.Variant('(ss)', ['org.kde.StatusNotifierItem', propertyName]),
-                new GLib.VariantType('(v)'),
-                Gio.DBusCallFlags.NONE,
-                1000,
-                null,
-                (conn, result) => {
-                    try {
-                        const reply = conn.call_finish(result);
-                        const [variant] = reply.deep_unpack();
-                        resolve(variant);
-                    } catch (e) {
-                        resolve(null);
-                    }
-                }
-            );
-        });
     }
 
     _setIconFromPixmap(pixmaps) {
@@ -1411,50 +1380,6 @@ const IconEffectDialog = GObject.registerClass({
 
         this._originalPixbuf = pixbuf;
         this._updatePreview();
-    }
-
-    _setIconFromName(iconName) {
-        this._isSymbolicIcon = iconName?.endsWith('-symbolic') ?? false;
-
-        // Some apps (e.g. Rustdesk) set IconName to an absolute file path rather
-        // than a themed icon name. Load it directly — Gtk.IconTheme.lookup_icon
-        // would treat the path as a name and return the "image-missing" icon,
-        // breaking the preview. Mirrors _updateIcon's startsWith('/') handling.
-        if (iconName && iconName.startsWith('/')) {
-            try {
-                this._setPreviewFromFile(iconName);
-                return;
-            } catch (e) {
-                debug(`IconEffectDialog: Failed to load icon from path ${iconName}: ${e.message}`);
-            }
-        }
-
-        try {
-            const iconTheme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default());
-            const iconPaintable = iconTheme.lookup_icon(
-                iconName,
-                null,  // fallbacks
-                64,    // size
-                1,     // scale
-                Gtk.TextDirection.NONE,
-                Gtk.IconLookupFlags.FORCE_REGULAR
-            );
-
-            if (iconPaintable) {
-                const file = iconPaintable.get_file();
-                if (file) {
-                    const path = file.get_path();
-                    if (path) {
-                        this._setPreviewFromFile(path);
-                        return;
-                    }
-                }
-            }
-        } catch (e) {
-            debug(`IconEffectDialog: Failed to load icon from theme: ${e.message}`);
-        }
-
-        this._previewImage.set_from_icon_name(iconName);
     }
 
     _setPreviewFromFile(path) {
@@ -1731,6 +1656,13 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         this._window = window;
         this._settings = this.getSettings();
+
+        // Resolve the icon theme's inheritance chain for the shared icon
+        // search, as the extension does on enable.
+        precomputeThemeChain(getIconThemeName()).catch(e => {
+            debug(`Theme chain precompute failed: ${e.message}`);
+        });
+
         this._bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
         this._signalIds = [];
         this._appRows = new Map();  // appId -> AppRow
@@ -2462,6 +2394,8 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
 
     _cleanup() {
         debug('Cleaning up preferences window');
+
+        resetThemeChain();
 
         for (const signalId of this._signalIds)
             this._bus.signal_unsubscribe(signalId);

@@ -28,6 +28,15 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
+import {
+    extractFlatpakAppId,
+    findIconInTheme,
+    isSymbolicIconFileName,
+    precomputeThemeChain,
+    resetThemeChain,
+    resolveIconFile,
+} from './iconLookup.js';
+
 const DEBUG = false;
 // Window within which a second press counts as a double click, for the
 // 'activate-double' click action. Clutter no longer exposes a click count on
@@ -49,181 +58,6 @@ const OVERFLOW_PREVIEW_HALO_INSET = 2;
 function debug(msg) {
     if (DEBUG) {
         console.log(`[StatusTray] ${msg}`);
-    }
-}
-
-// Cached theme inheritance chain — resolved once, cleared in disable().
-let _themeChainCache = null;
-let _themeChainPromise = null;
-
-function _loadContentsAsync(file) {
-    return new Promise((resolve, reject) => {
-        file.load_contents_async(null, (f, res) => {
-            try {
-                resolve(f.load_contents_finish(res));
-            } catch (e) {
-                reject(e);
-            }
-        });
-    });
-}
-
-// Resolve the full theme inheritance chain by reading Inherits= from each
-// theme's index.theme. Async — results cached in _themeChainCache. Callers
-// that need the chain synchronously use _getThemeChain() which returns the
-// cache or a minimal fallback if precompute hasn't finished.
-async function _precomputeThemeChain(themeName, iconDirs) {
-    if (_themeChainCache)
-        return _themeChainCache;
-    if (_themeChainPromise)
-        return _themeChainPromise;
-
-    _themeChainPromise = (async () => {
-        const visited = new Set();
-        const chain = [];
-        const queue = [themeName];
-
-        while (queue.length > 0) {
-            const name = queue.shift();
-            if (visited.has(name))
-                continue;
-            visited.add(name);
-            chain.push(name);
-
-            for (const baseDir of iconDirs) {
-                const indexPath = `${baseDir}/${name}/index.theme`;
-                if (!GLib.file_test(indexPath, GLib.FileTest.EXISTS))
-                    continue;
-                try {
-                    const file = Gio.File.new_for_path(indexPath);
-                    const [ok, contents] = await _loadContentsAsync(file);
-                    if (!ok) break;
-                    const text = new TextDecoder().decode(contents);
-                    const match = text.match(/^Inherits\s*=\s*(.+)$/m);
-                    if (match) {
-                        const parents = match[1].split(',').map(s => s.trim()).filter(s => s);
-                        for (const p of parents) {
-                            if (!visited.has(p))
-                                queue.push(p);
-                        }
-                    }
-                } catch (_e) {
-                    // ignore unreadable index files
-                }
-                break;
-            }
-        }
-
-        if (!visited.has('hicolor'))
-            chain.push('hicolor');
-
-        _themeChainCache = chain;
-        _themeChainPromise = null;
-        return chain;
-    })();
-
-    return _themeChainPromise;
-}
-
-function _getThemeChain(themeName) {
-    if (_themeChainCache)
-        return _themeChainCache;
-    // Precompute hasn't finished — return a minimal chain so the caller can
-    // still attempt a direct lookup. Subsequent icon refreshes will use the
-    // full cache once it's ready.
-    return themeName === 'hicolor' ? ['hicolor'] : [themeName, 'hicolor'];
-}
-
-// The size/category subdirectories of an FDO icon theme, most specific
-// first. Shared by the host-theme search and the app-supplied
-// IconThemePath search so both cover the same ground.
-function _iconThemeSubdirs() {
-    const categories = [
-        'apps', 'applications',
-        'status',
-        'devices',
-        'actions',
-        'places',
-        'mimetypes',
-        'emotes',
-        'categories',
-        'emblems',
-        'ui',
-        'legacy',
-    ];
-    const subdirs = [];
-    for (const cat of categories) {
-        subdirs.push(`scalable/${cat}`);
-        subdirs.push(`symbolic/${cat}`);
-        for (const sz of ['48x48', '32x32', '24x24', '22x22', '16x16'])
-            subdirs.push(`${sz}/${cat}`);
-    }
-    return subdirs;
-}
-
-// Search an app-supplied IconThemePath for `iconName`. Apps point this at
-// anything from a flat directory of PNGs to the root of a full theme tree,
-// and their icons are not always under `apps` — Dropbox files its sync
-// status icons elsewhere in the tree — so cover the same category/size
-// matrix the host-theme search uses. A complete miss costs well under a
-// millisecond and only runs when an icon changes.
-function findIconInThemePath(themePath, iconName) {
-    if (!themePath || themePath.length === 0)
-        return null;
-
-    const exts = ['.png', '.svg'];
-    const prefixes = [''];
-    for (const subdir of _iconThemeSubdirs()) {
-        prefixes.push(`${subdir}/`);
-        prefixes.push(`hicolor/${subdir}/`);
-    }
-
-    for (const prefix of prefixes) {
-        for (const ext of exts) {
-            const path = `${themePath}/${prefix}${iconName}${ext}`;
-            if (GLib.file_test(path, GLib.FileTest.EXISTS))
-                return path;
-        }
-    }
-
-    return null;
-}
-
-function findIconInTheme(iconName) {
-    try {
-        const themeName = St.Settings.get().gtk_icon_theme;
-        const dataDirs = GLib.get_system_data_dirs();
-
-        const iconDirs = dataDirs.map(d => `${d}/icons`);
-        iconDirs.push('/var/lib/flatpak/exports/share/icons');
-        iconDirs.push(`${GLib.get_home_dir()}/.local/share/icons`);
-
-        const themes = _getThemeChain(themeName);
-        const subdirs = _iconThemeSubdirs();
-        const exts = ['.svg', '.png'];
-        // Also try the -symbolic variant as a fallback for standard icon names
-        const names = [iconName];
-        if (!iconName.endsWith('-symbolic'))
-            names.push(`${iconName}-symbolic`);
-
-        for (const name of names) {
-            for (const baseDir of iconDirs) {
-                for (const theme of themes) {
-                    for (const subdir of subdirs) {
-                        for (const ext of exts) {
-                            const path = `${baseDir}/${theme}/${subdir}/${name}${ext}`;
-                            if (GLib.file_test(path, GLib.FileTest.EXISTS))
-                                return path;
-                        }
-                    }
-                }
-            }
-        }
-
-        return null;
-    } catch (e) {
-        debug(`Error checking icon existence: ${e.message}`);
-        return null;
     }
 }
 
@@ -409,14 +243,9 @@ function panelForegroundChanged(button, settings) {
     return true;
 }
 
-// St recolours an icon file to the theme's foreground colour whenever its name
-// marks it symbolic (the same suffixes GTK uses), even when it's loaded as a
-// Gio.FileIcon with -st-icon-style: regular.
 function isSymbolicIconFile(gicon) {
-    if (!(gicon instanceof Gio.FileIcon))
-        return false;
-    const name = gicon.get_file().get_basename();
-    return /-symbolic(-ltr|-rtl)?\.svg$|\.symbolic\.png$/.test(name);
+    return gicon instanceof Gio.FileIcon &&
+        isSymbolicIconFileName(gicon.get_file().get_basename());
 }
 
 // "_File" -> "File", "__File" -> "_File"
@@ -454,13 +283,6 @@ function normalizeToolTipId(toolTipTitle) {
     // Strip trailing bracketed/parenthesised counts e.g. "Element [1]", "App (3)"
     toolTipTitle = toolTipTitle.replace(/\s*[\[(]\d+[\])]\s*$/, '').trim();
     return toolTipTitle;
-}
-
-// e.g. "/run/user/1000/app/org.ferdium.Ferdium/..." -> "org.ferdium.Ferdium"
-function extractFlatpakAppId(iconThemePath) {
-    if (!iconThemePath) return null;
-    const match = iconThemePath.match(/\/run\/user\/\d+\/app\/([^/]+)/);
-    return match ? match[1] : null;
 }
 
 function _applyIconPadding(button, settings) {
@@ -1286,85 +1108,52 @@ const TrayItem = GObject.registerClass({
     _setIcon(iconName, allowCachedPixmap = true) {
         debug(`_setIcon called with: ${iconName}, themePath: ${this._iconThemePath}`);
 
-        if (iconName.startsWith('/')) {
-            const file = Gio.File.new_for_path(iconName);
-            if (file.query_exists(null)) {
-                debug(`Using absolute icon path: ${iconName}`);
-                const gicon = new Gio.FileIcon({ file });
-                this._icon.set_gicon(gicon);
-                this._clearIconExcept('gicon');
-                this._applySymbolicStyle();
-                return;
-            } else {
-                debug(`Absolute icon path doesn't exist: ${iconName}`);
-            }
+        // The file search is shared with preferences (iconLookup.js), so the
+        // app list and the effect preview find the same icon as the panel.
+        const iconPath = resolveIconFile(
+            iconName, this._iconThemePath, St.Settings.get().gtk_icon_theme);
+        if (iconPath) {
+            debug(`Using icon file: ${iconPath}`);
+            const file = Gio.File.new_for_path(iconPath);
+            this._icon.set_gicon(new Gio.FileIcon({ file }));
+            this._clearIconExcept('gicon');
+            this._applySymbolicStyle();
+            return;
         }
 
         if (this._iconThemePath && this._iconThemePath.length > 0) {
-            const themePathIcon = findIconInThemePath(this._iconThemePath, iconName);
-            if (themePathIcon) {
-                debug(`Found icon file at: ${themePathIcon}`);
-                const file = Gio.File.new_for_path(themePathIcon);
-                this._icon.set_gicon(new Gio.FileIcon({ file }));
-                this._clearIconExcept('gicon');
-                this._applySymbolicStyle();
-                return;
-            }
-            debug(`No icon file found in IconThemePath: ${this._iconThemePath}`);
-
-            // Try Flatpak app ID as icon name before falling to pixmap
-            const flatpakId = extractFlatpakAppId(this._iconThemePath);
-            const flatpakIconPath = flatpakId ? findIconInTheme(flatpakId) : null;
-            if (flatpakIconPath) {
-                debug(`Using Flatpak app icon: ${flatpakId} (${flatpakIconPath})`);
-                const file = Gio.File.new_for_path(flatpakIconPath);
-                this._icon.set_gicon(new Gio.FileIcon({ file }));
-                this._clearIconExcept('gicon');
-                this._applySymbolicStyle();
-                return;
-            }
-
             debug(`IconThemePath inaccessible (possibly sandboxed), trying IconPixmap`);
             this._fetchIconPixmapWithFallback(iconName, false, allowCachedPixmap);
             return;
         }
 
-        const iconPath = findIconInTheme(iconName);
-        if (iconPath) {
-            debug(`Using icon file from theme: ${iconPath}`);
-            const file = Gio.File.new_for_path(iconPath);
-            this._icon.set_gicon(new Gio.FileIcon({ file }));
+        // Manual walk missed it — ask St.IconTheme to resolve via the
+        // full FDO engine, then route through the gicon path.
+        debug(`Using GTK icon resolution for: ${iconName}`);
+
+        let resolvedFile = null;
+        try {
+            const stTheme = new St.IconTheme();
+            const paintable = stTheme.lookup_icon(iconName, 16, 0);
+            if (paintable)
+                resolvedFile = paintable.get_file?.() ?? paintable.file ?? null;
+        } catch (e) {
+            debug(`St.IconTheme lookup failed for ${iconName}: ${e.message}`);
+        }
+
+        if (resolvedFile) {
+            this._icon.set_gicon(new Gio.FileIcon({ file: resolvedFile }));
             this._clearIconExcept('gicon');
             this._applySymbolicStyle();
-        } else {
-            // Manual walk missed it — ask St.IconTheme to resolve via the
-            // full FDO engine, then route through the gicon path.
-            debug(`Using GTK icon resolution for: ${iconName}`);
-
-            let resolvedFile = null;
-            try {
-                const stTheme = new St.IconTheme();
-                const paintable = stTheme.lookup_icon(iconName, 16, 0);
-                if (paintable)
-                    resolvedFile = paintable.get_file?.() ?? paintable.file ?? null;
-            } catch (e) {
-                debug(`St.IconTheme lookup failed for ${iconName}: ${e.message}`);
-            }
-
-            if (resolvedFile) {
-                this._icon.set_gicon(new Gio.FileIcon({ file: resolvedFile }));
-                this._clearIconExcept('gicon');
-                this._applySymbolicStyle();
-                return;
-            }
-
-            // A non-empty IconName is not necessarily resolvable in the host
-            // icon theme. Prefer the app-provided pixmap in that case instead
-            // of leaving an allocated but blank panel slot.  findIconInTheme
-            // has already missed here, so the fallback must not repeat it.
-            debug(`Icon not found in theme, trying IconPixmap: ${iconName}`);
-            this._fetchIconPixmapWithFallback(iconName, true, allowCachedPixmap);
+            return;
         }
+
+        // A non-empty IconName is not necessarily resolvable in the host
+        // icon theme. Prefer the app-provided pixmap in that case instead
+        // of leaving an allocated but blank panel slot.  findIconInTheme
+        // has already missed here, so the fallback must not repeat it.
+        debug(`Icon not found in theme, trying IconPixmap: ${iconName}`);
+        this._fetchIconPixmapWithFallback(iconName, true, allowCachedPixmap);
     }
 
     // Clear icon properties that are NOT the active rendering source.
@@ -1403,7 +1192,9 @@ const TrayItem = GObject.registerClass({
     // already run findIconInTheme on this name pass skipThemeSearch to avoid
     // repeating a search that is certain to miss.
     _setIconFromThemeFile(iconName, skipThemeSearch = false) {
-        const iconPath = skipThemeSearch ? null : findIconInTheme(iconName);
+        const iconPath = skipThemeSearch
+            ? null
+            : findIconInTheme(iconName, St.Settings.get().gtk_icon_theme);
         if (iconPath) {
             debug(`Fallback: using icon file from theme: ${iconPath}`);
             const file = Gio.File.new_for_path(iconPath);
@@ -3198,12 +2989,7 @@ export default class StatusTrayExtension extends Extension {
 
         // Kick off async theme-chain precompute so icon lookups use the full
         // inheritance chain without any sync file IO on the first lookup.
-        const themeName = St.Settings.get().gtk_icon_theme;
-        const dataDirs = GLib.get_system_data_dirs();
-        const iconDirs = dataDirs.map(d => `${d}/icons`);
-        iconDirs.push('/var/lib/flatpak/exports/share/icons');
-        iconDirs.push(`${GLib.get_home_dir()}/.local/share/icons`);
-        _precomputeThemeChain(themeName, iconDirs).catch(e => {
+        precomputeThemeChain(St.Settings.get().gtk_icon_theme).catch(e => {
             debug(`Theme chain precompute failed: ${e.message}`);
         });
 
@@ -3240,8 +3026,7 @@ export default class StatusTrayExtension extends Extension {
         this._items.clear();
 
         _sniInterfaceInfo = null;
-        _themeChainCache = null;
-        _themeChainPromise = null;
+        resetThemeChain();
 
         debug('Extension disabled');
     }

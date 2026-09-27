@@ -26,6 +26,7 @@ cd "$SRC_DIR"
 # Explicitly exclude compiled schemas and any other unnecessary files
 zip -r "$OUTPUT_FILE" \
     extension.js \
+    iconLookup.js \
     prefs.js \
     metadata.json \
     stylesheet.css \
