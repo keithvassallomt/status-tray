@@ -108,9 +108,12 @@ Status Tray/
 │   │
 │   ├── prefs.js              # Settings UI
 │   │   ├── AppRow            # Individual app settings row
-│   │   ├── IconPickerDialog  # Icon selection dialog
-│   │   ├── IconEffectDialog  # Effect customization dialog
+│   │   ├── IconPickerDialog  # Icon selection window
+│   │   ├── IconEffectDialog  # Effect customization window
 │   │   └── StatusTrayPreferences  # Main preferences window
+│   │
+│   ├── iconLookup.js         # Icon file search shared by extension.js and
+│   │                         # prefs.js (Gio/GLib only, loaded in both processes)
 │   │
 │   ├── metadata.json         # Extension metadata
 │   ├── stylesheet.css        # Panel icon styling
@@ -163,6 +166,7 @@ new TrayItem(
 | `_appId` | String | Stable app identifier for settings |
 | `_settings` | Gio.Settings | Extension settings reference |
 | `_icon` | St.Icon | The displayed icon widget |
+| `_flatpakAppPath` | String | Host location of a Flatpak app's `/app`, or null (see *Sandboxed App Support*) |
 | `_cancellable` | Gio.Cancellable | For cancelling async operations |
 
 #### Key Methods
@@ -172,11 +176,13 @@ new TrayItem(
 | `_initProxy()` | Initialize D-Bus proxy with interface info |
 | `_updateIcon()` | Fetch and display icon from SNI |
 | `_resolveAppId()` | Determine stable app ID from ToolTip/IconThemePath/SNI Id |
-| `_setIcon(iconName)` | Set icon by theme name |
-| `_setIconFromPixmap(pixmapData)` | Set icon from ARGB pixel data |
+| `_setIcon(iconName)` | Set icon by name, via the shared `resolveIconFile()` search |
+| `_setIconFromPixmap(pixmapData)` | Set icon from ARGB pixel data, as an `St.ImageContent` gicon |
+| `_resolveFlatpakAppPath()` | Find a Flatpak app's `/app` on the host; redo the icon if it was waiting on it |
 | `_replaceIcon(iconNameOrPath)` | Destroy and recreate St.Icon widget (used for overrides) |
 | `_applySymbolicStyle(targetIcon, iconSize, forceMode)` | Apply Clutter effects for symbolic mode; `forceMode` overrides the global `icon-mode` (used by the overflow preview) |
-| `_clearIconExcept(activeSource)` | Clear inactive icon sources (content/gicon/icon_name) |
+| `vfunc_style_changed()` | Re-apply the effects when the panel's text colour changes |
+| `_clearIconExcept(activeSource)` | Clear inactive icon sources (gicon/icon_name) |
 | `_loadMenu()` | Fetch menu via DBusMenu and display |
 | `_activateMenuItem(itemId)` | Send click event to menu item |
 | `destroy()` | Clean up all resources and subscriptions |
@@ -188,10 +194,15 @@ new TrayItem(
 2. If override is fallback-only, store it and continue
 3. Try `IconName` property from SNI proxy cache
 4. If no IconName, use fallback override if set
-5. Try `IconPixmap` property (ARGB pixel data via `St.ImageContent`)
+5. Try `IconPixmap` property (ARGB pixel data, handed to `St.Icon` as an
+   `St.ImageContent` gicon so it is sized and padded like a themed icon)
 6. Direct D-Bus fetch of `IconThemePath` → `IconName` → `IconPixmap`
-7. For Flatpak apps: try app ID as icon name (e.g. `org.ferdium.Ferdium`)
-8. Look up in system icon theme via `findIconInTheme()`
+7. Search for the icon file with `resolveIconFile()` (`iconLookup.js`, shared
+   with preferences): an absolute path; the app's `IconThemePath`, with a
+   Flatpak sandbox's `/app` mapped to the host; for Flatpak apps, the app ID as
+   icon name (e.g. `org.ferdium.Ferdium`); otherwise the host icon theme via
+   `findIconInTheme()`
+8. Ask `St.IconTheme`, then fall back to `IconPixmap`
 9. Fallback to `image-loading-symbolic` placeholder
 
 ---
@@ -324,6 +335,9 @@ and the number of active `TrayItem`s exceeds `overflow-inline-count`.
   DBusMenu fetch against the submenu (see *Menu System* below).
 - Listens to each overflowed `TrayItem`'s `display-changed` signal and
   refreshes the row's label, icon, and cached menu contents live.
+- Re-applies its rows and preview from `vfunc_style_changed()` when the
+  panel's text colour changes. Overflowed `TrayItem`s are hidden, and St
+  doesn't restyle hidden widgets, so they can't do it themselves.
 
 #### Interaction with TrayItem
 
@@ -459,47 +473,64 @@ _argbToRgba(argbData) {
 ### Symbolic Style Effects
 
 The symbolic mode uses Clutter effects to make full-colour icons monochrome.
-**Symbolic icons** (names ending in `-symbolic`) are excluded from desaturation
-and brightness/contrast effects, since `St.Icon` already recolours them to
-match the panel theme via `-st-icon-style: symbolic`. Tint is still applied
-if configured.
+**Symbolic icons** (names ending in `-symbolic`, or files named
+`*-symbolic.svg`, `*-symbolic-ltr.svg`, `*-symbolic-rtl.svg` or
+`*.symbolic.png`) get no effects: `St.Icon` already paints them in the style's
+`color`, the panel's text colour. A tint is applied to them by setting that
+`color` instead.
+
+Clutter runs the most recently added effect first, so `_applySymbolicStyle()`
+builds the list in the order the effects should run and adds it in reverse:
 
 ```javascript
-_applySymbolicStyle(targetIcon = this._icon, iconSize = 16) {
-    const isSymbolicIcon = iconName?.endsWith('-symbolic');
+// Full-colour icons, in running order:
+effects.push(['desaturate', new Clutter.DesaturateEffect({ factor: desaturation })]);  // 0.0 - 1.0
 
-    // Symbolic icons: St.Icon handles recolouring via CSS.
-    // Only apply effects to full-colour (pixmap/raster) icons.
-    if (!isSymbolicIcon) {
-        // 1. Desaturation (grayscale conversion)
-        this._icon.add_effect(new Clutter.DesaturateEffect({
-            factor: desaturation  // 0.0 - 1.0
-        }));
+const bc = new Clutter.BrightnessContrastEffect();
+bc.set_brightness_full(brightness, brightness, brightness);  // -1.0 to 1.0
+bc.set_contrast_full(contrast, contrast, contrast);          // 0.0 to 2.0
+effects.push(['brightness', bc]);
 
-        // 2. Brightness/Contrast adjustment
-        const bc = new Clutter.BrightnessContrastEffect();
-        bc.set_brightness(brightness);  // -1.0 to 1.0
-        bc.set_contrast(contrast);      // 0.0 to 2.0
-        this._icon.add_effect(bc);
-    }
+if (!dark)          // light panel: invert, landing the glyph on the text colour or tint
+    effects.push(['light-panel', new LightPanelEffect(tint ?? panelTextColour)]);
+else if (tint)      // dark panel: optional tint
+    effects.push(['tint', makeTintEffect(tint)]);
 
-    // 3. Optional tint (colorize) — applied to all icon types
-    if (useTint) {
-        this._icon.add_effect(new Clutter.ColorizeEffect({ tint: color }));
-    }
+targetIcon.clear_effects();
+for (const [name, effect] of effects.reverse())
+    targetIcon.add_effect_with_name(name, effect);
+```
+
+Desaturation and brightness/contrast leave a light glyph on dark
+surroundings, which suits a dark panel. They cannot make a light pixel darker
+than a dark one, so on a light panel `LightPanelEffect` (a `Shell.GLSLEffect`)
+inverts lightness on premultiplied colour: the glyph comes out in the panel's
+text colour and transparent pixels stay transparent. The same default values
+(desaturation 1.0, brightness −0.25, contrast 0.6) therefore suit both panels.
+
+### Light and Dark Panels
+
+Whether the panel is dark is read from the text colour the shell theme gives a
+panel button, not from `org.gnome.desktop.interface color-scheme`. GNOME only
+loads its light shell stylesheet for `'prefer-light'`, so `'default'` keeps a
+dark top bar, and GNOME Classic and custom themes set their own panel colours.
+
+```javascript
+function readPanelDark(button) {
+    const fg = readPanelForeground(button);   // null while off the stage
+    if (!fg)
+        return null;
+    return 0.299 * fg[0] + 0.587 * fg[1] + 0.114 * fg[2] > 0.5;
 }
 ```
 
-### Dark Mode Detection
-
-```javascript
-_isDarkMode() {
-    const settings = new Gio.Settings({ schema: 'org.gnome.desktop.interface' });
-    return settings.get_string('color-scheme') === 'prefer-dark';
-}
-```
-
-Default effect parameters adapt based on light/dark mode.
+`TrayItem` and `OverflowButton` override `vfunc_style_changed()`: when a
+stylesheet swap or the overview changes the panel's text colour, they re-apply
+their effects. The result is published to the internal `panel-dark` key, which
+preferences reads (it runs outside the shell and can't see its theme) and
+which serves as a fallback before a button is on the stage. The overview gives
+the panel light text over its dark backdrop, so the key is not written while
+the panel has the `overview` pseudo-class.
 
 ---
 
@@ -608,6 +639,7 @@ _activateMenuItem(itemId) {
 | `overflow-inline-count` | `i` | `3` | Inline icon limit before items spill into the overflow menu; `0` keeps every tray item in overflow |
 | `overflow-icon-style` | `s` | `'static'` | `'static'` uses the bundled tray glyph; `'dynamic-original'` previews up to four hidden icons in colour; `'dynamic-symbolic'` previews them in monochrome with a separating outline; `'custom'` uses the icon set in `overflow-custom-icon` |
 | `overflow-custom-icon` | `s` | `''` | Theme icon name or absolute file path for the overflow button when `overflow-icon-style` is `'custom'`; falls back to the bundled glyph when empty or the file is missing |
+| `panel-dark` | `b` | `true` | Internal: whether the top bar is dark, written by the extension from the panel's text colour (see *Light and Dark Panels*) for preferences to read; not meant to be set by hand |
 
 ### Effect Override Format
 
@@ -698,7 +730,9 @@ the Behaviour page with the custom icon row showing) and 85% of the smallest
 monitor. Width is fixed at 640: `AdwPreferencesPage` caps content at 600, and at
 600 or below `AdwPreferencesWindow` moves the page switcher into a bottom bar.
 Rows added later scroll rather than resize the window. If a label change makes a
-row wrap onto an extra line, re-measure and update the constants.
+row wrap onto an extra line, re-measure and update the constants. The icon
+picker and effect dialogs are separate windows, so this height doesn't limit
+them.
 
 ### AppRow (`prefs.js`)
 
@@ -706,7 +740,10 @@ Each row represents a discovered tray application.
 
 ```javascript
 // Key functionality
-- Fetches app info from SNI (Title, Id, IconName)
+- Fetches app info from SNI (Title, Id, IconName, IconThemePath)
+- Resolves its icon in the same order as TrayItem, through the shared
+  resolveIconFile(), and keeps the result (this._iconSource) for the effect
+  dialog
 - Drag-and-drop reordering via GtkDragSource/GtkDropTarget
 - Icon picker opens IconPickerDialog
 - Effect tuner opens IconEffectDialog
@@ -715,9 +752,11 @@ Each row represents a discovered tray application.
 
 ### IconPickerDialog (`prefs.js`)
 
-Modal `Adw.Dialog` for selecting custom icons and tuning per-app override
-flags. Stays open across selections so multiple settings can be adjusted in
-one visit; close the dialog (titlebar button or Esc) when done.
+Modal `Adw.Window`, transient for the preferences window, for selecting
+custom icons and tuning per-app override flags. It is a separate window rather
+than an `Adw.Dialog` so it sizes to its own content instead of being clipped to
+the preferences window. Stays open across selections so multiple settings can
+be adjusted in one visit; close it (titlebar button or Esc) when done.
 
 ```javascript
 // Features
@@ -733,13 +772,16 @@ one visit; close the dialog (titlebar button or Esc) when done.
 
 ### IconEffectDialog (`prefs.js`)
 
-Modal dialog for customizing icon effects.
+Modal `Adw.Window`, transient for the preferences window, for customizing
+icon effects.
 
 ```javascript
 // Features
 - Sliders: desaturation, brightness, contrast
 - Color picker for optional tint
-- Live preview with effect simulation
+- Live preview of the icon the AppRow resolved, on a top-bar-coloured
+  backdrop (panel-dark), computed with the same maths and effect order as
+  the tray's Clutter effects, including the light-panel inversion
 - Reset to defaults button
 - Saves to icon-effect-overrides as JSON
 ```
@@ -860,25 +902,19 @@ _getPosition(appId) {
 
 ### Icon Theme Path Search
 
-For Electron apps that set `IconThemePath`:
+`findIconInThemePath()` in `iconLookup.js` searches an app-supplied
+`IconThemePath`. Apps point it at anything from a flat directory of PNGs to
+the root of a full theme tree, so it tries the directory itself and then every
+size/category subdirectory the host-theme search uses, both directly and under
+`hicolor/`:
 
 ```javascript
-_findIconInThemePath(iconName, themePath) {
-    const patterns = [
-        `${themePath}/${iconName}.png`,
-        `${themePath}/${iconName}.svg`,
-        `${themePath}/hicolor/22x22/apps/${iconName}.png`,
-        `${themePath}/hicolor/24x24/apps/${iconName}.png`,
-        `${themePath}/hicolor/scalable/apps/${iconName}.svg`,
-    ];
-
-    for (const pattern of patterns) {
-        if (GLib.file_test(pattern, GLib.FileTest.EXISTS)) {
-            return pattern;
-        }
-    }
-    return null;
+const prefixes = [''];
+for (const subdir of _iconThemeSubdirs()) {   // scalable/apps, 48x48/status, ...
+    prefixes.push(`${subdir}/`);
+    prefixes.push(`hicolor/${subdir}/`);
 }
+// then ${themePath}/${prefix}${iconName}.png / .svg, first match wins
 ```
 
 ---
@@ -935,19 +971,23 @@ this._connection.signal_subscribe(
 
 ### Sandboxed App Support (Flatpak)
 
+A Flatpak app reports `IconThemePath` (or an absolute `IconName`) as it sees
+it inside its sandbox. Paths under `/run/user/<uid>/app/<id>` or
+`~/.var/app/<id>` are readable from the host as they are. Paths under `/app`
+are not: `/app` is the app's deploy directory, whose host location the
+sandbox's `/.flatpak-info` records as `[Instance] app-path`.
+
 ```javascript
-// IconThemePath may be inaccessible from outside sandbox
-try {
-    const iconPath = this._findIconInThemePath(iconName, themePath);
-    if (iconPath) {
-        this._setIconFromPath(iconPath);
-        return;
-    }
-} catch (e) {
-    // Permission denied - fall back to IconPixmap
-    console.debug(`Cannot access ${themePath}, using IconPixmap`);
-}
+// iconLookup.js: for the item's D-Bus connection
+const [pid] = /* org.freedesktop.DBus.GetConnectionUnixProcessID(busName) */;
+const info = `/proc/${pid}/root/.flatpak-info`;   // how the portals identify apps too
+return keyFile.get_string('Instance', 'app-path'); // null if not a Flatpak app
 ```
+
+The connection can belong to the app's `xdg-dbus-proxy` rather than the app,
+but the proxy's sandbox carries the same file. `resolveIconFile()` maps `/app`
+paths onto `app-path`. When nothing is found, the tray tries the app ID as an
+icon name and then falls back to `IconPixmap`.
 
 ### Async Operation Cancellation
 
@@ -1025,7 +1065,8 @@ try {
 Before submitting changes:
 
 - [ ] Test with multiple apps (Electron + Qt + GTK)
-- [ ] Test symbolic and original icon modes
+- [ ] Test symbolic and original icon modes, on a dark and a light top bar
+      (`color-scheme` `'default'` and `'prefer-light'`)
 - [ ] Test drag-and-drop reordering
 - [ ] Test icon override functionality
 - [ ] Verify cleanup on extension disable
@@ -1044,20 +1085,30 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
+import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+import { ... } from './iconLookup.js';
 
 // Preferences imports (prefs.js)
 import Adw from 'gi://Adw';
 import Gdk from 'gi://Gdk';
+import GdkPixbuf from 'gi://GdkPixbuf';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import { ... } from './iconLookup.js';
+
+// Shared module (iconLookup.js): Gio and GLib only, since it loads in both
+// processes
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 ```
 
 ---
