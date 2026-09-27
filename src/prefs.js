@@ -612,7 +612,7 @@ class AppRow extends Adw.ActionRow {
         dialog.connect('icon-selected', (_dlg, _iconName) => {
             this._updateIcon();
         });
-        dialog.present(this._window);
+        dialog.present();
     }
 
     _openEffectDialog() {
@@ -624,34 +624,50 @@ class AppRow extends Adw.ActionRow {
             this._settings,
             this._window
         );
-        dialog.present(this._window);
+        dialog.present();
     }
 });
+
+// The icon picker and effect dialogs are separate windows rather than
+// Adw.Dialogs, which live inside the preferences window and get clipped when
+// their content is taller than it. As transient, modal windows they size to
+// their own content and sit over the preferences window. Escape closes them,
+// as it did when they were Adw.Dialogs.
+function addEscapeToClose(window) {
+    const controller = new Gtk.ShortcutController();
+    controller.add_shortcut(new Gtk.Shortcut({
+        trigger: Gtk.ShortcutTrigger.parse_string('Escape'),
+        action: Gtk.NamedAction.new('window.close'),
+    }));
+    window.add_controller(controller);
+}
 
 const IconPickerDialog = GObject.registerClass({
     Signals: {
         'icon-selected': { param_types: [GObject.TYPE_STRING] },
     },
-}, class IconPickerDialog extends Adw.Dialog {
+}, class IconPickerDialog extends Adw.Window {
     _init(appId, displayName, currentIconName, currentIconGicon, settings, parentWindow, options = null) {
         const simpleKey = options?.simpleKey ?? null;
         super._init({
             title: options?.title ?? `Icon for ${displayName}`,
-            content_width: 450,
-            content_height: 700,
+            modal: true,
+            transient_for: parentWindow,
+            default_width: 450,
+            default_height: 700,
         });
+        addEscapeToClose(this);
 
         this._appId = appId;
         this._displayName = displayName;
         this._settings = settings;
         this._currentIconName = currentIconName;
         this._currentIconGicon = currentIconGicon;
-        this._parentWindow = parentWindow;
         this._simpleKey = simpleKey;
         this._allIcons = [];  // Cache of discovered icons
 
         const toolbarView = new Adw.ToolbarView();
-        this.set_child(toolbarView);
+        this.set_content(toolbarView);
 
         toolbarView.add_top_bar(new Adw.HeaderBar({
             show_end_title_buttons: true,
@@ -1042,7 +1058,7 @@ const IconPickerDialog = GObject.registerClass({
         filters.append(filter);
         dialog.set_filters(filters);
 
-        dialog.open(this._parentWindow, null, (dlg, result) => {
+        dialog.open(this, null, (dlg, result) => {
             try {
                 const file = dlg.open_finish(result);
                 if (file) {
@@ -1102,24 +1118,26 @@ const IconEffectDialog = GObject.registerClass({
     Signals: {
         'effect-applied': {},
     },
-}, class IconEffectDialog extends Adw.Dialog {
+}, class IconEffectDialog extends Adw.Window {
     _init(appId, displayName, busName, objectPath, settings, parentWindow) {
         super._init({
             title: `Effect Settings for ${displayName}`,
-            content_width: 400,
-            content_height: 520,
+            modal: true,
+            transient_for: parentWindow,
+            default_width: 400,
+            default_height: 520,
         });
+        addEscapeToClose(this);
 
         this._appId = appId;
         this._busName = busName;
         this._objectPath = objectPath || '/StatusNotifierItem';
         this._settings = settings;
-        this._parentWindow = parentWindow;
 
         this._loadCurrentValues();
 
         const toolbarView = new Adw.ToolbarView();
-        this.set_child(toolbarView);
+        this.set_content(toolbarView);
 
         toolbarView.add_top_bar(new Adw.HeaderBar({
             show_end_title_buttons: true,
@@ -2026,7 +2044,7 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
                 { simpleKey: 'overflow-custom-icon', title: 'Custom overflow icon' }
             );
             dialog.connect('icon-selected', () => refreshOverflowCustomPreview());
-            dialog.present(this._window);
+            dialog.present();
         });
 
         const overflowCountRow = new Adw.SpinRow({
