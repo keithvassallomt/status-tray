@@ -317,19 +317,106 @@ function getSNIInterfaceInfo() {
     return _sniInterfaceInfo;
 }
 
-let _interfaceSettings = null;
+// GNOME's light top bar text colour, for when a button's own can't be read.
+const LIGHT_PANEL_FOREGROUND = [0x22 / 255, 0x22 / 255, 0x26 / 255];
 
-function isDarkMode() {
-    try {
-        if (!_interfaceSettings) {
-            _interfaceSettings = new Gio.Settings({ schema: 'org.gnome.desktop.interface' });
-        }
-        const colorScheme = _interfaceSettings.get_string('color-scheme');
-        return colorScheme === 'prefer-dark';
-    } catch (e) {
-        // Fallback: assume dark mode (most common)
-        return true;
+// The text colour the shell theme gives a panel button, as [r, g, b] in 0-1.
+// Null while the button is off the stage and has no theme node to read.
+function readPanelForeground(button) {
+    if (!button.get_stage())
+        return null;
+    const fg = button.get_theme_node().get_foreground_color();
+    return [fg.red / 255, fg.green / 255, fg.blue / 255];
+}
+
+// Whether a panel button sits on a dark panel, judged from the text colour the
+// shell theme gives it. The color-scheme setting is no guide: GNOME only loads
+// its light shell stylesheet for 'prefer-light', so 'default' keeps a dark top
+// bar, and GNOME Classic and custom themes pick their own panel colours.
+function readPanelDark(button) {
+    const fg = readPanelForeground(button);
+    if (!fg)
+        return null;
+    return 0.299 * fg[0] + 0.587 * fg[1] + 0.114 * fg[2] > 0.5;
+}
+
+function isPanelDark(button, settings) {
+    return readPanelDark(button) ?? settings.get_boolean('panel-dark');
+}
+
+function makeTintEffect([r, g, b]) {
+    // ColorizeEffect takes a Clutter.Color on GNOME 46; Clutter.Color was
+    // removed in 47 in favour of Cogl.Color.
+    let color;
+    if (Clutter.Color) {
+        color = Clutter.Color.new(
+            Math.round(r * 255), Math.round(g * 255), Math.round(b * 255), 255);
+    } else {
+        color = new Cogl.Color();
+        color.init_from_4f(r, g, b, 1.0);
     }
+    const colorize = new Clutter.ColorizeEffect();
+    colorize.set_tint(color);
+    return colorize;
+}
+
+// Carries the monochrome treatment over to a light panel. Desaturation and
+// brightness/contrast leave a light glyph on dark surroundings, which suits a
+// dark panel, but they can't make a light pixel darker than a dark one. This
+// inverts lightness so the glyph comes out dark, landing on glyph_color (the
+// panel's text colour, or the tint) rather than black; whatever colour is left
+// in the icon keeps its hue. It works on premultiplied colour, so transparent
+// pixels stay transparent. Shell.InvertLightnessEffect doesn't, and paints
+// them white.
+const LightPanelEffect = GObject.registerClass(
+class StatusTrayLightPanelEffect extends Shell.GLSLEffect {
+    _init(glyphColor) {
+        super._init();
+        this.set_uniform_float(this.get_uniform_location('glyph_color'), 3, glyphColor);
+    }
+
+    vfunc_build_pipeline() {
+        // Shell.SnippetHook on GNOME 46 and 47, Cogl.SnippetHook from 48.
+        this.add_glsl_snippet(Shell.SnippetHook?.FRAGMENT ?? Cogl.SnippetHook.FRAGMENT,
+            'uniform vec3 glyph_color;',
+            'float lightness = dot (cogl_color_out.rgb, vec3 (0.299, 0.587, 0.114));\n' +
+            'cogl_color_out.rgb += cogl_color_out.a - lightness * (2.0 - glyph_color);\n',
+            false);
+    }
+});
+
+// Keep the last-known answer in settings, as the fallback for when
+// readPanelDark has none and for the preferences window, which runs outside
+// the shell and can't read its theme. The overview gives the panel light text
+// over its dark backdrop, which would flip this on every overview toggle in
+// light mode, so only the resting panel is published.
+function publishPanelDark(settings, dark) {
+    if (Main.panel.has_style_pseudo_class('overview'))
+        return;
+    if (settings.get_boolean('panel-dark') !== dark)
+        settings.set_boolean('panel-dark', dark);
+}
+
+// A shell stylesheet swap or the overview can change the panel's colours,
+// restyling every panel button. Records the text colour `button` now has and
+// returns whether it changed, so the caller can re-apply its effects.
+function panelForegroundChanged(button, settings) {
+    const fg = readPanelForeground(button)?.join();
+    if (!fg || fg === button._panelForeground)
+        return false;
+    button._panelForeground = fg;
+    publishPanelDark(settings, readPanelDark(button));
+    return true;
+}
+
+// St recolours an icon file to the theme's foreground colour whenever its name
+// marks it symbolic (the same suffixes GTK uses), even when it's loaded as a
+// Gio.FileIcon with -st-icon-style: regular.
+function isSymbolicIconFile(gicon) {
+    if (!(gicon instanceof Gio.FileIcon))
+        return false;
+    const name = gicon.get_file().get_basename();
+    return /-symbolic(-ltr|-rtl)?\.svg$|\.symbolic\.png$/.test(name);
 }
 
 // "_File" -> "File", "__File" -> "_File"
@@ -427,6 +514,8 @@ const TrayItem = GObject.registerClass({
 
         this.add_style_class_name('status-tray-button');
         _applyIconPadding(this, this._settings);
+
+        this._panelForeground = null;
 
         // PanelMenu.Button toggles its menu from a Clutter.ClickGesture that
         // recognises on press, independently of vfunc_event — returning
@@ -1331,6 +1420,12 @@ const TrayItem = GObject.registerClass({
         this._applySymbolicStyle();
     }
 
+    vfunc_style_changed() {
+        super.vfunc_style_changed();
+        if (panelForegroundChanged(this, this._settings))
+            this._applySymbolicStyle();
+    }
+
     _applySymbolicStyle(targetIcon = this._icon, iconSize = this._settings.get_int('icon-size'), forceMode = null) {
         const iconName = this._icon.icon_name;
         const isSymbolicIcon = iconName && iconName.endsWith('-symbolic');
@@ -1359,10 +1454,12 @@ const TrayItem = GObject.registerClass({
             return;
         }
 
-        const dark = isDarkMode();
+        const dark = isPanelDark(this, this._settings);
 
+        // The same defaults suit either panel: a light one differs only by
+        // the LightPanelEffect added below.
         let desaturation = 1.0;
-        let brightness = dark ? -0.25 : -0.5;
+        let brightness = -0.25;
         let contrast = 0.6;
         let useTint = false;
         let tintColor = [1.0, 1.0, 1.0];  // White default
@@ -1382,48 +1479,43 @@ const TrayItem = GObject.registerClass({
             debug(`Failed to parse effect override for ${this._appId}: ${e.message}`);
         }
 
-        targetIcon.clear_effects();
+        const tint = useTint && tintColor ? tintColor : null;
+        // Effects in the order they should run. Clutter runs the most recently
+        // added effect first, so they're added in reverse below.
+        const effects = [];
+        let colorCss = '';
 
-        // Symbolic icons (e.g. shield-symbolic) are already monochrome and
-        // get recoloured by St.Icon to match the panel theme.  Desaturation
-        // and brightness/contrast effects are designed for full-colour icons
-        // and will make symbolic icons invisible.  Tint is still useful so
-        // we only skip desaturate + brightness/contrast here.
-        if (!isSymbolicIcon) {
-            if (desaturation > 0) {
-                const desaturate = new Clutter.DesaturateEffect({ factor: desaturation });
-                targetIcon.add_effect_with_name('desaturate', desaturate);
-            }
+        if (isSymbolicIcon || isSymbolicIconFile(this._icon.gicon)) {
+            // Symbolic icons (e.g. shield-symbolic) are already monochrome,
+            // and St paints them in the style's `color`: the panel's text
+            // colour, or the tint. Desaturation and brightness/contrast are
+            // designed for full-colour icons and would only dim or hide them.
+            // Most icons arrive as files rather than names, so check the file
+            // too.
+            if (tint)
+                colorCss = ` color: rgb(${tint.map(c => Math.round(c * 255)).join(', ')});`;
+        } else {
+            if (desaturation > 0)
+                effects.push(['desaturate', new Clutter.DesaturateEffect({ factor: desaturation })]);
 
             const bc = new Clutter.BrightnessContrastEffect();
             bc.set_contrast_full(contrast, contrast, contrast);
             bc.set_brightness_full(brightness, brightness, brightness);
-            targetIcon.add_effect_with_name('brightness', bc);
-        }
+            effects.push(['brightness', bc]);
 
-        if (useTint && tintColor) {
-            try {
-                let color;
-                if (Cogl.Color.prototype.init_from_4f) {
-                    color = new Cogl.Color();
-                    color.init_from_4f(tintColor[0], tintColor[1], tintColor[2], 1.0);
-                } else {
-                    color = Clutter.Color.new(
-                        Math.round(tintColor[0] * 255),
-                        Math.round(tintColor[1] * 255),
-                        Math.round(tintColor[2] * 255),
-                        255
-                    );
-                }
-                const colorize = new Clutter.ColorizeEffect();
-                colorize.set_tint(color);
-                targetIcon.add_effect_with_name('tint', colorize);
-            } catch (e) {
-                debug(`Failed to apply tint effect: ${e.message}`);
+            if (!dark) {
+                const glyph = tint ?? readPanelForeground(this) ?? LIGHT_PANEL_FOREGROUND;
+                effects.push(['light-panel', new LightPanelEffect(glyph)]);
+            } else if (tint) {
+                effects.push(['tint', makeTintEffect(tint)]);
             }
         }
 
-        targetIcon.set_style(`icon-size: ${iconSize}px;${iconStyleCss}`);
+        targetIcon.clear_effects();
+        for (const [name, effect] of effects.reverse())
+            targetIcon.add_effect_with_name(name, effect);
+
+        targetIcon.set_style(`icon-size: ${iconSize}px;${iconStyleCss}${colorCss}`);
         if (isPanelIcon)
             this.emit('display-changed');
     }
@@ -2082,6 +2174,8 @@ class OverflowButton extends PanelMenu.Button {
         // Rows keyed by the source TrayItem so we can update in place on
         // display-changed signals without rebuilding the whole submenu.
         this._rows = new Map();
+
+        this._panelForeground = null;
     }
 
     updateOverflowIcon() {
@@ -2173,13 +2267,25 @@ class OverflowButton extends PanelMenu.Button {
         });
     }
 
-    // Contrasting colour for the monochrome-preview halo. In dark mode the
+    // Contrasting colour for the monochrome-preview halo. On a dark panel the
     // glyphs are light, so the halo is dark (≈ panel background) and vice
-    // versa. Tracks light/dark without fragile theme-node reads.
+    // versa.
     _haloColor() {
-        return isDarkMode()
+        return isPanelDark(this, this._settings)
             ? 'rgba(46, 52, 54, 0.95)'
             : 'rgba(245, 245, 245, 0.95)';
+    }
+
+    // Overflowed TrayItems are hidden, and St doesn't restyle hidden widgets
+    // until they're shown again, so they can't notice the panel's colours
+    // changing themselves. Refresh the preview and the menu rows from here.
+    vfunc_style_changed() {
+        super.vfunc_style_changed();
+        if (!panelForegroundChanged(this, this._settings))
+            return;
+        for (const [trayItem, subItem] of this._rows)
+            this._applyRowIcon(subItem, trayItem);
+        this._scheduleIconUpdate();
     }
 
     _buildDynamicIcon(style) {
@@ -3134,7 +3240,6 @@ export default class StatusTrayExtension extends Extension {
         this._items.clear();
 
         _sniInterfaceInfo = null;
-        _interfaceSettings = null;
         _themeChainCache = null;
         _themeChainPromise = null;
 

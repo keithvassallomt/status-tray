@@ -122,5 +122,11 @@
       <description>Icon for the overflow button when overflow-icon-style is 'custom'. Either a theme icon name or an absolute file path (a leading '/' selects file mode). When empty or pointing at a missing file, the bundled glyph is used instead.</description>
     </key>
 
+    <key name="panel-dark" type="b">
+      <default>true</default>
+      <summary>Whether the top bar is dark (internal)</summary>
+      <description>Written by the extension from the text colour the shell theme gives the top bar, for the preferences window, which can't see the shell theme itself, and as a fallback before the tray is on screen. On a light top bar, monochrome icons are inverted so they come out dark. The color-scheme setting can't answer this: GNOME keeps a dark top bar under the 'default' scheme. Not meant to be set by hand; the extension rewrites it whenever the top bar changes between light and dark.</description>
+    </key>
+
   </schema>
 </schemalist>

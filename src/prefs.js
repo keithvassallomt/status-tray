@@ -18,6 +18,15 @@ function debug(msg) {
 // row at module level as a workaround.
 let _draggedRow = null;
 
+// The effect preview sits on the stock GNOME top bar colour for the panel's
+// current light/dark state, so the chosen settings read as they will in the
+// panel rather than against this window's background.
+const EFFECT_PREVIEW_CSS = `
+.status-tray-effect-preview { padding: 12px; border-radius: 12px; }
+.status-tray-effect-preview.panel-dark { background-color: #000000; }
+.status-tray-effect-preview.panel-light { background-color: #fafafb; }
+`;
+
 // Window size, from libadwaita 1.9 metrics at the default text scale. The
 // width must stay above 600: at or below that, AdwPreferencesWindow moves its
 // page switcher out of the header bar into a bar along the bottom.
@@ -1134,6 +1143,12 @@ const IconEffectDialog = GObject.registerClass({
         this._objectPath = objectPath || '/StatusNotifierItem';
         this._settings = settings;
 
+        // The preview's backdrop colours, for as long as this dialog is open.
+        this._cssProvider = new Gtk.CssProvider();
+        this._cssProvider.load_from_string(EFFECT_PREVIEW_CSS);
+        Gtk.StyleContext.add_provider_for_display(this.get_display(),
+            this._cssProvider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+
         this._loadCurrentValues();
 
         const toolbarView = new Adw.ToolbarView();
@@ -1156,6 +1171,8 @@ const IconEffectDialog = GObject.registerClass({
 
         const previewFrame = new Gtk.Frame({
             halign: Gtk.Align.CENTER,
+            css_classes: ['status-tray-effect-preview',
+                this._settings.get_boolean('panel-dark') ? 'panel-dark' : 'panel-light'],
         });
         content.append(previewFrame);
 
@@ -1265,13 +1282,16 @@ const IconEffectDialog = GObject.registerClass({
         this._updatePreview();
     }
 
-    _loadCurrentValues() {
-        const styleManager = Adw.StyleManager.get_default();
-        const isDark = styleManager.get_dark();
+    vfunc_close_request() {
+        Gtk.StyleContext.remove_provider_for_display(this.get_display(), this._cssProvider);
+        return super.vfunc_close_request();
+    }
 
-        // Defaults - these match what extension.js uses in _applySymbolicStyle
+    _loadCurrentValues() {
+        // Defaults - these match what extension.js uses in _applySymbolicStyle,
+        // the same for a light or dark top bar
         this._desaturation = 1.0;
-        this._brightness = isDark ? -0.25 : -0.5;  // Match tray: darken slightly in dark mode, more in light mode
+        this._brightness = -0.25;
         this._contrast = 0.6;
         this._useTint = false;
         this._tintColor = [1.0, 1.0, 1.0];
@@ -1531,17 +1551,32 @@ const IconEffectDialog = GObject.registerClass({
 
         const newPixels = new Uint8Array(srcPixels.length);
 
-        // Match Clutter's shaders so the preview matches the tray icon:
+        // Mirror the tray's effect chain so the preview matches the panel
+        // icon. Clutter's shaders, in the order the tray runs them:
         //   DesaturateEffect:         rgb = mix(rgb, luminance, factor)
-        //   BrightnessContrastEffect: rgb += brightness; rgb = (rgb - 0.5) * C + 0.5
-        //                             where C = tan((contrast + 1) * π/4)
-        //   ColorizeEffect:           rgb = luminance * tint
-        // Symbolic icons skip desaturate + brightness/contrast to mirror the
-        // tray pipeline, where St.Icon recolours them to match the panel.
-        const applyColorEffects = !this._isSymbolicIcon;
+        //   BrightnessContrastEffect: rgb = rgb * M + O, where M = 1 + b and
+        //                             O = 0 for b < 0, else M = 1 - b and O = b;
+        //                             then rgb = (rgb - 0.5) * C + 0.5, where
+        //                             C = tan((contrast + 1) * π/4)
+        //   then, on a dark panel, ColorizeEffect (tint): rgb = luminance * tint
+        //   or, on a light panel, LightPanelEffect:
+        //                             rgb += 1 - luminance * (2 - glyph), where
+        //                             glyph is the tint or the panel's text colour
+        // Each effect renders to an 8-bit buffer, so values clamp in between.
+        // Symbolic icons skip all of that: St paints them in the panel's text
+        // colour, or the tint. Panel colours are stock GNOME's, for the
+        // light/dark state the extension published.
+        const panelDark = this._settings.get_boolean('panel-dark');
+        const tint = useTint ? [tintRgba.red, tintRgba.green, tintRgba.blue] : null;
+        const panelText = panelDark ? [0xff, 0xff, 0xff] : [0x22, 0x22, 0x26];
+        const glyph = tint ? tint.map(c => c * 255) : panelText;
         const contrastClamped = Math.max(-1, Math.min(0.9999, contrast));
         const contrastFactor = Math.tan((contrastClamped + 1) * Math.PI / 4);
-        const brightnessOffset = brightness * 255;
+        const brightnessMultiplier = brightness < 0 ? 1 + brightness : 1 - brightness;
+        const brightnessOffset = brightness < 0 ? 0 : brightness * 255;
+        const clamp = v => Math.max(0, Math.min(255, v));
+        const adjust = v => clamp(
+            (v * brightnessMultiplier + brightnessOffset - 127.5) * contrastFactor + 127.5);
 
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
@@ -1552,7 +1587,9 @@ const IconEffectDialog = GObject.registerClass({
                 let b = srcPixels[offset + 2];
                 const a = hasAlpha ? srcPixels[offset + 3] : 255;
 
-                if (applyColorEffects) {
+                if (this._isSymbolicIcon) {
+                    [r, g, b] = glyph;
+                } else {
                     if (desaturation > 0) {
                         const L = 0.299 * r + 0.587 * g + 0.114 * b;
                         r = r + (L - r) * desaturation;
@@ -1560,20 +1597,21 @@ const IconEffectDialog = GObject.registerClass({
                         b = b + (L - b) * desaturation;
                     }
 
-                    r = r + brightnessOffset;
-                    g = g + brightnessOffset;
-                    b = b + brightnessOffset;
+                    r = adjust(r);
+                    g = adjust(g);
+                    b = adjust(b);
 
-                    r = (r - 128) * contrastFactor + 128;
-                    g = (g - 128) * contrastFactor + 128;
-                    b = (b - 128) * contrastFactor + 128;
-                }
-
-                if (useTint) {
-                    const L = 0.299 * r + 0.587 * g + 0.114 * b;
-                    r = L * tintRgba.red;
-                    g = L * tintRgba.green;
-                    b = L * tintRgba.blue;
+                    if (!panelDark) {
+                        const L = 0.299 * r + 0.587 * g + 0.114 * b;
+                        r = r + 255 - L * (2 - glyph[0] / 255);
+                        g = g + 255 - L * (2 - glyph[1] / 255);
+                        b = b + 255 - L * (2 - glyph[2] / 255);
+                    } else if (tint) {
+                        const L = 0.299 * r + 0.587 * g + 0.114 * b;
+                        r = L * tint[0];
+                        g = L * tint[1];
+                        b = L * tint[2];
+                    }
                 }
 
                 newPixels[offset] = Math.max(0, Math.min(255, Math.round(r)));
