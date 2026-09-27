@@ -4,6 +4,22 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.1] - [UNRELEASED]
+
+### Fixed
+- Icons that apps supply as raw image data now get the same slot width as every other icon, so the gaps between tray icons are even. Thanks to [@hopsayer](https://github.com/hopsayer) for the report (#29).
+- An icon that switches from raw image data to a themed icon mid-session is no longer squashed into a sliver.
+- Monochrome icons are no longer grey on a dark top bar when the system uses GNOME's default colour scheme. Light or dark is now read from the top bar itself, so GNOME Classic and custom shell themes are handled too, and a switch between light and dark applies immediately.
+- Monochrome icons now look right on a light top bar, drawn in the top bar's own text colour instead of as a grey glyph on a black background. Light and dark top bars now share the same default effect settings.
+  - If you adjusted an app's effect settings on a light top bar, you may need to adjust or reset them again.
+- Icons that are already symbolic are no longer dimmed in monochrome mode.
+- The Tint effect setting now works; desaturation used to cancel it out.
+  - Effects now run in the order the settings dialog lists them, so effect settings saved on a dark top bar may look slightly different.
+- The effect settings preview in preferences now matches what the top bar shows.
+- The effect settings preview now shows the app's icon instead of a missing-image placeholder. Preferences now finds icons the same way the top bar does, so the app list, the preview and the top bar always show the same icon.
+- Flatpak apps that point to icon files inside their sandbox now show their icon instead of an empty slot.
+- The icon picker and effect settings dialogs are no longer cut off when the preferences window is shorter than they are. They now open as their own windows, sized to fit.
+
 ## [2.0] - 2026-09-24
 
 ### Changed
