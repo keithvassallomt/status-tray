@@ -1122,7 +1122,7 @@ const TrayItem = GObject.registerClass({
         if (passive === this._isPassive)
             return;
         this._isPassive = passive;
-        const container = this.container || this;
+        const container = this.container;
         if (passive)
             container.hide();
         else
@@ -3257,7 +3257,7 @@ export default class StatusTrayExtension extends Extension {
         for (const trayItem of this._items.values()) {
             if (trayItem._isPassive)
                 continue;
-            const container = trayItem.container || trayItem;
+            const container = trayItem.container;
             if (container.visible)
                 return trayItem;
         }
@@ -3299,7 +3299,7 @@ export default class StatusTrayExtension extends Extension {
         const children = box.get_children();
         let first = -1;
         for (const trayItem of this._items.values()) {
-            const idx = children.indexOf(trayItem.container || trayItem);
+            const idx = children.indexOf(trayItem.container);
             if (idx !== -1 && (first === -1 || idx < first))
                 first = idx;
         }
@@ -3364,7 +3364,7 @@ export default class StatusTrayExtension extends Extension {
 
         let position = 0;
         for (const trayItem of this._items.values()) {
-            const container = trayItem.container || trayItem;
+            const container = trayItem.container;
             if (container.get_parent() !== box)
                 continue;
             const otherIndex = validOrder.indexOf(trayItem._appId);
@@ -3410,7 +3410,7 @@ export default class StatusTrayExtension extends Extension {
         const base = this._managedBase(box);
         for (let i = 0; i < entries.length; i++) {
             const { trayItem } = entries[i];
-            const container = trayItem.container || trayItem;
+            const container = trayItem.container;
             if (container.get_parent() === box) {
                 box.set_child_at_index(container, base + i);
             }
@@ -3455,7 +3455,7 @@ export default class StatusTrayExtension extends Extension {
             const children = box.get_children();
             let last = -1;
             for (const trayItem of this._items.values())
-                last = Math.max(last, children.indexOf(trayItem.container || trayItem));
+                last = Math.max(last, children.indexOf(trayItem.container));
             // Nothing of ours parented yet: fall back to the block's base, so
             // an early call can't drop the button in front of the Activities
             // button or the clock.
@@ -3465,7 +3465,7 @@ export default class StatusTrayExtension extends Extension {
         const tearDown = () => {
             // Reveal everything we manage; destroy the overflow button.
             for (const trayItem of entries) {
-                const container = trayItem.container || trayItem;
+                const container = trayItem.container;
                 container.show();
             }
             if (this._overflowButton) {
@@ -3483,11 +3483,11 @@ export default class StatusTrayExtension extends Extension {
         const overflowed = entries.slice(inlineCount);
 
         for (const trayItem of inline) {
-            const container = trayItem.container || trayItem;
+            const container = trayItem.container;
             container.show();
         }
         for (const trayItem of overflowed) {
-            const container = trayItem.container || trayItem;
+            const container = trayItem.container;
             container.hide();
         }
 
@@ -3508,7 +3508,7 @@ export default class StatusTrayExtension extends Extension {
 
         // Keep the overflow button at the rightmost slot relative to our
         // managed items (hidden and passive containers still occupy a slot).
-        const overflowContainer = this._overflowButton.container || this._overflowButton;
+        const overflowContainer = this._overflowButton.container;
         if (overflowContainer.get_parent() === box) {
             box.set_child_at_index(overflowContainer, slotAfterManagedItems());
         }
