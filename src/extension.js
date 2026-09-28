@@ -3350,6 +3350,9 @@ export default class StatusTrayExtension extends Extension {
      * slot as the base for every later item. Moving the tray back into the
      * right box did exactly that, because the items came back with their app
      * IDs already known.
+     *
+     * @param {string} appId
+     * @param {St.BoxLayout} box
      */
     _calculatePosition(appId, box) {
         // Bus names are ephemeral and shouldn't be used for ordering
