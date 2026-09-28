@@ -3107,7 +3107,8 @@ export default class StatusTrayExtension extends Extension {
         });
 
         const appId = storedAppId || extractedAppId;
-        const position = this._calculatePosition(appId);
+        const box = this._panelBox();
+        const position = this._calculatePosition(appId, box);
 
         let areaKey = `StatusTray-${appId}`;
         let counter = 2;
@@ -3116,7 +3117,7 @@ export default class StatusTrayExtension extends Extension {
             counter++;
         }
         const boxName = this._panelBoxName();
-        const slot = this._managedBase(this._panelBox()) + position;
+        const slot = this._managedBase(box) + position;
         Main.panel.addToStatusArea(areaKey, trayItem, slot, boxName);
         debug(`Added TrayItem: ${uniqueId} as ${areaKey} at slot ${slot} (${boxName} box)`);
         this._scheduleReorder();
@@ -3326,33 +3327,40 @@ export default class StatusTrayExtension extends Extension {
     }
 
     /**
-     * Calculate the panel position for a tray item based on app-order setting
-     * LOWER positions appear further LEFT in the panel box (index 0 = leftmost)
-     * HIGHER positions appear further RIGHT (closer to edge)
-     * We use position 0 to place tray icons at the leftmost position in the right box
+     * Where a new item goes within our block in `box`, counted from the
+     * block's first slot. Items with no app-order entry, including ones
+     * still known only by bus name, go first; _reorderItems places them
+     * once their app ID resolves.
+     *
+     * A listed item goes after every item already in the box that app-order
+     * puts before it. Its app-order index can't be used directly: app-order
+     * also lists apps that aren't running, so base + index can land among
+     * GNOME's own indicators or past them, and _managedBase then takes that
+     * slot as the base for every later item. Moving the tray back into the
+     * right box did exactly that, because the items came back with their app
+     * IDs already known.
      */
-    _calculatePosition(appId) {
-        // If appId is a bus name (starts with :), don't use app-order positioning
+    _calculatePosition(appId, box) {
         // Bus names are ephemeral and shouldn't be used for ordering
-        if (appId.startsWith(':')) {
+        if (appId.startsWith(':'))
             return 0;
-        }
 
-        const appOrder = this._settings.get_strv('app-order');
-
-        // Filter out bus names from app-order when calculating position
-        // Only count real app IDs (not :1.xxx style bus names)
-        const validOrder = appOrder.filter(id => !id.startsWith(':'));
+        const validOrder = this._settings.get_strv('app-order')
+            .filter(id => !id.startsWith(':'));
         const orderIndex = validOrder.indexOf(appId);
-
-        if (orderIndex === -1) {
-            // Items not in app-order get position 0 (leftmost in right box)
+        if (orderIndex === -1)
             return 0;
-        }
 
-        // Items at the start of app-order (index 0) should appear leftmost (position 0)
-        // Items at the end should appear rightmost (higher position index)
-        return orderIndex;
+        let position = 0;
+        for (const trayItem of this._items.values()) {
+            const container = trayItem.container || trayItem;
+            if (container.get_parent() !== box)
+                continue;
+            const otherIndex = validOrder.indexOf(trayItem._appId);
+            if (otherIndex !== -1 && otherIndex <= orderIndex)
+                position++;
+        }
+        return position;
     }
 
     /**

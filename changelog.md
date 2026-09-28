@@ -4,7 +4,12 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [2.1] - [UNRELEASED]
+## [Unreleased]
+
+### Fixed
+- Switching the panel position back to Right after trying Left or Centre no longer puts the tray after GNOME's own status icons (network, volume, power). It now goes back to its usual place, before them. The same thing happened when an app was re-enabled in preferences while no other tray icon was showing.
+
+## [2.1] - 2026-09-27
 
 ### Fixed
 - Icons that apps supply as raw image data now get the same slot width as every other icon, so the gaps between tray icons are even. Thanks to [@hopsayer](https://github.com/hopsayer) for the report (#29).
