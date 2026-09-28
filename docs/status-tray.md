@@ -201,7 +201,8 @@ new TrayItem(
    with preferences): an absolute path; the app's `IconThemePath`, with a
    Flatpak sandbox's `/app` mapped to the host; for Flatpak apps, the app ID as
    icon name (e.g. `org.ferdium.Ferdium`); otherwise the host icon theme via
-   `findIconInTheme()`
+   `findIconInTheme()`, which searches the user's icon folders first and goes
+   theme by theme, as GNOME does, so a user's own copy of an icon wins (#29)
 8. Ask `St.IconTheme`, then fall back to `IconPixmap`
 9. Fallback to `image-loading-symbolic` placeholder
 

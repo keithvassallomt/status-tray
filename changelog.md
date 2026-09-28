@@ -7,6 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Icons you put in your own icon folder, `~/.local/share/icons` or `~/.icons`, now replace an app's icon of the same name, as they do everywhere else in GNOME. Status Tray used to search the system folders first, so an icon you had edited or replaced was ignored. Icons are also now found theme by theme, the way GNOME does it: your icon theme's version of an icon wins over a copy in the fallback hicolor theme, whichever folders they are in. Thanks to [@hopsayer](https://github.com/hopsayer) for the report and for tracking down the cause (#29).
 - Starting Proton VPN installed from Proton's rpm or deb packages no longer crashes GNOME Shell and logs you out. The app answers a request for icon image data with empty text instead, and reading that as an image took the whole shell down. Any other app that does the same is now handled too. Thanks to [@cmvictor](https://github.com/cmvictor) for the report (#32).
 - Switching the panel position back to Right after trying Left or Centre no longer puts the tray after GNOME's own status icons (network, volume, power). It now goes back to its usual place, before them. The same thing happened when an app was re-enabled in preferences while no other tray icon was showing. Thanks to [@adavidys](https://github.com/adavidys) for the report (#31).
 

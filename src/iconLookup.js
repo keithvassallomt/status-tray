@@ -26,13 +26,17 @@ function _loadContentsAsync(file, cancellable = null) {
     });
 }
 
-// The icon theme base directories searched, in order.
+// The icon theme base directories searched, in order. The user's own come
+// first, as in GNOME's lookup, so an icon a user drops into
+// ~/.local/share/icons replaces the system copy of the same name (#29).
 function _iconBaseDirs() {
-    const dataDirs = GLib.get_system_data_dirs();
-    const iconDirs = dataDirs.map(d => `${d}/icons`);
-    iconDirs.push('/var/lib/flatpak/exports/share/icons');
-    iconDirs.push(`${GLib.get_home_dir()}/.local/share/icons`);
-    return iconDirs;
+    const iconDirs = [
+        GLib.build_filenamev([GLib.get_user_data_dir(), 'icons']),
+        GLib.build_filenamev([GLib.get_home_dir(), '.icons']),
+        ...GLib.get_system_data_dirs().map(d => GLib.build_filenamev([d, 'icons'])),
+        '/var/lib/flatpak/exports/share/icons',
+    ];
+    return [...new Set(iconDirs)];
 }
 
 // Resolve the full theme inheritance chain by reading Inherits= from each
@@ -176,9 +180,11 @@ export function findIconInTheme(iconName, themeName) {
     if (!iconName.endsWith('-symbolic'))
         names.push(`${iconName}-symbolic`);
 
+    // Theme by theme, as GNOME does: the user's theme wins from any base
+    // directory before its parents and hicolor are tried.
     for (const name of names) {
-        for (const baseDir of iconDirs) {
-            for (const theme of themes) {
+        for (const theme of themes) {
+            for (const baseDir of iconDirs) {
                 for (const subdir of subdirs) {
                     for (const ext of exts) {
                         const path = `${baseDir}/${theme}/${subdir}/${name}${ext}`;
