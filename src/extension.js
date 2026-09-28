@@ -46,6 +46,11 @@ const DEBUG = false;
 const DOUBLE_CLICK_INTERVAL_MS = 400;
 const FALLBACK_ICON_NAME = 'image-loading-symbolic';
 const PIXMAPS_FORMAT = Cogl.PixelFormat.ARGB_8888;
+// IconPixmap's D-Bus type. Some apps answer Get for a property they don't
+// have with an empty string instead of an error (Proton VPN does), and
+// n_children() on anything but a container aborts gnome-shell (#32), so
+// check the type before reading a pixmap.
+const PIXMAPS_TYPE = 'a(iiay)';
 const OVERFLOW_PREVIEW_LIMIT = 4;
 const OVERFLOW_PREVIEW_SIZE = 18;
 const OVERFLOW_PREVIEW_SOLO_ICON_SIZE = 16;
@@ -828,7 +833,7 @@ const TrayItem = GObject.registerClass({
         const cached = allowCachedPixmap && this._proxy
             ? this._proxy.get_cached_property('IconPixmap')
             : null;
-        if (cached && cached.n_children() > 0) {
+        if (cached && cached.get_type_string() === PIXMAPS_TYPE && cached.n_children() > 0) {
             debug(`Using cached IconPixmap for: ${iconName}`);
             if (this._setIconFromPixmap(cached))
                 return;
@@ -1346,6 +1351,12 @@ const TrayItem = GObject.registerClass({
         try {
             let pixmaps;
             if (pixmapVariant instanceof GLib.Variant) {
+                const type = pixmapVariant.get_type_string();
+                if (type !== PIXMAPS_TYPE) {
+                    debug(`IconPixmap for ${this._busName} is ${type}, not ${PIXMAPS_TYPE}`);
+                    return false;
+                }
+
                 const numChildren = pixmapVariant.n_children();
                 if (numChildren === 0) {
                     debug(`Empty IconPixmap for ${this._busName}`);

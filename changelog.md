@@ -7,6 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Starting Proton VPN installed from Proton's rpm or deb packages no longer crashes GNOME Shell and logs you out. The app answers a request for icon image data with empty text instead, and reading that as an image took the whole shell down. Any other app that does the same is now handled too. Thanks to [@cmvictor](https://github.com/cmvictor) for the report (#32).
 - Switching the panel position back to Right after trying Left or Centre no longer puts the tray after GNOME's own status icons (network, volume, power). It now goes back to its usual place, before them. The same thing happened when an app was re-enabled in preferences while no other tray icon was showing.
 
 ## [2.1] - 2026-09-27
