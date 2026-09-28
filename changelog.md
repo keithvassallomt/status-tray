@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.2] - 2026-09-28
 
 ### Fixed
 - Icons you put in your own icon folder, `~/.local/share/icons` or `~/.icons`, now replace an app's icon of the same name, as they do everywhere else in GNOME. Status Tray used to search the system folders first, so an icon you had edited or replaced was ignored. Icons are also now found theme by theme, the way GNOME does it: your icon theme's version of an icon wins over a copy in the fallback hicolor theme, whichever folders they are in. Thanks to [@hopsayer](https://github.com/hopsayer) for the report and for tracking down the cause (#29).
