@@ -504,7 +504,8 @@ for (const [name, effect] of effects.reverse())
 
 Desaturation and brightness/contrast leave a light glyph on dark
 surroundings, which suits a dark panel. They cannot make a light pixel darker
-than a dark one, so on a light panel `LightPanelEffect` (a `Shell.GLSLEffect`)
+than a dark one, so on a light panel `LightPanelEffect` (a `Shell.GLSLEffect`,
+or a `Clutter.ShaderEffect` on GNOME 51, which removed `Shell.GLSLEffect`)
 inverts lightness on premultiplied colour: the glyph comes out in the panel's
 text colour and transparent pixels stay transparent. The same default values
 (desaturation 1.0, brightness −0.25, contrast 0.6) therefore suit both panels.

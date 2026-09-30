@@ -4,6 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.3] - 2026-09-30
+
+### Fixed
+- Status Tray now loads on GNOME 51. GNOME 51 removed a part of the shell that Status Tray used to draw monochrome icons on a light top bar, which stopped the whole extension from starting, whatever colour your top bar is. Thanks to [@Aceler](https://github.com/Aceler) for the report and for finding the cause (#33).
+
 ## [2.2] - 2026-09-28
 
 ### Fixed

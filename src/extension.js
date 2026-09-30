@@ -209,22 +209,43 @@ function makeTintEffect([r, g, b]) {
 // in the icon keeps its hue. It works on premultiplied colour, so transparent
 // pixels stay transparent. Shell.InvertLightnessEffect doesn't, and paints
 // them white.
-const LightPanelEffect = GObject.registerClass(
-class StatusTrayLightPanelEffect extends Shell.GLSLEffect {
-    _init(glyphColor) {
-        super._init();
-        this.set_uniform_float(this.get_uniform_location('glyph_color'), 3, glyphColor);
-    }
+const LIGHT_PANEL_DECLARATIONS = 'uniform vec3 glyph_color;';
+const LIGHT_PANEL_CODE =
+    'float lightness = dot (cogl_color_out.rgb, vec3 (0.299, 0.587, 0.114));\n' +
+    'cogl_color_out.rgb += cogl_color_out.a - lightness * (2.0 - glyph_color);\n';
 
-    vfunc_build_pipeline() {
-        // Shell.SnippetHook on GNOME 46 and 47, Cogl.SnippetHook from 48.
-        this.add_glsl_snippet(Shell.SnippetHook?.FRAGMENT ?? Cogl.SnippetHook.FRAGMENT,
-            'uniform vec3 glyph_color;',
-            'float lightness = dot (cogl_color_out.rgb, vec3 (0.299, 0.587, 0.114));\n' +
-            'cogl_color_out.rgb += cogl_color_out.a - lightness * (2.0 - glyph_color);\n',
-            false);
-    }
-});
+// GNOME 51 removed Shell.GLSLEffect in favour of Clutter.ShaderEffect, which
+// takes its GLSL as a Cogl.Snippet and sets uniforms by name. The older
+// Clutter.ShaderEffect wants a whole GLSL program instead, so 46 to 50 keep
+// Shell.GLSLEffect.
+const LightPanelEffect = Shell.GLSLEffect
+    ? GObject.registerClass(
+    class StatusTrayLightPanelEffect extends Shell.GLSLEffect {
+        _init(glyphColor) {
+            super._init();
+            this.set_uniform_float(this.get_uniform_location('glyph_color'), 3, glyphColor);
+        }
+
+        vfunc_build_pipeline() {
+            // Shell.SnippetHook on GNOME 46 and 47, Cogl.SnippetHook from 48.
+            this.add_glsl_snippet(Shell.SnippetHook?.FRAGMENT ?? Cogl.SnippetHook.FRAGMENT,
+                LIGHT_PANEL_DECLARATIONS, LIGHT_PANEL_CODE, false);
+        }
+    })
+    : GObject.registerClass(
+    class StatusTrayLightPanelEffect extends Clutter.ShaderEffect {
+        _init(glyphColor) {
+            super._init();
+            this.set_uniform_float('glyph_color', 3, glyphColor);
+        }
+
+        vfunc_get_static_snippet() {
+            // Passed as post code rather than set_replace(), so it runs after
+            // the default fragment code as before.
+            return Cogl.Snippet.new(Cogl.SnippetHook.FRAGMENT,
+                LIGHT_PANEL_DECLARATIONS, LIGHT_PANEL_CODE);
+        }
+    });
 
 // Keep the last-known answer in settings, as the fallback for when
 // readPanelDark has none and for the preferences window, which runs outside
