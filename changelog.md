@@ -4,6 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- Logging out, restarting or shutting down with icons in the overflow strip no longer logs a `TypeError` ("this._view.child is null") for each icon in the strip. GNOME Shell destroys the panel on its way out, Status Tray's icons with it, without turning extensions off first. Status Tray laid the strip out again as each icon went, and reached for parts of the strip that were already gone. It now leaves the overflow alone once the panel is being destroyed. Thanks to [@DevWebeloper](https://github.com/DevWebeloper) for the report (#42).
+
 ## [2.9] - 2026-10-29
 
 ### Fixed

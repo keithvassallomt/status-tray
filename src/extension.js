@@ -3434,6 +3434,14 @@ export default class StatusTrayExtension extends Extension {
         // overflowed app quits and another starts.
         this._iconStripExpanded = false;
 
+        // At shutdown the shell destroys the panel, and our icons with it,
+        // while the extension is still enabled. Laying the overflow out again
+        // as each icon goes would reach for actors already destroyed (#42).
+        this._panelDestroyed = false;
+        Main.panel.connectObject('destroy', () => {
+            this._panelDestroyed = true;
+        }, this);
+
         // Claim the watcher name early, since apps starting alongside the shell
         // may look for it only once. Discovery is async, so nothing reaches
         // _onItemRegistered before enable() returns.
@@ -3547,6 +3555,7 @@ export default class StatusTrayExtension extends Extension {
 
         this._settings.disconnectObject(this);
         this._settings = null;
+        Main.panel.disconnectObject(this);
 
         this._destroyOverflowButton();
         this._destroyIconStrip();
@@ -3953,7 +3962,7 @@ export default class StatusTrayExtension extends Extension {
      * idempotent.
      */
     _applyOverflow() {
-        if (!this._settings)
+        if (!this._settings || this._panelDestroyed)
             return;
 
         const enabled = this._settings.get_boolean('overflow-enabled');
