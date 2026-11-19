@@ -3434,14 +3434,6 @@ export default class StatusTrayExtension extends Extension {
         // overflowed app quits and another starts.
         this._iconStripExpanded = false;
 
-        // At shutdown the shell destroys the panel, and our icons with it,
-        // while the extension is still enabled. Laying the overflow out again
-        // as each icon goes would reach for actors already destroyed (#42).
-        this._panelDestroyed = false;
-        Main.panel.connectObject('destroy', () => {
-            this._panelDestroyed = true;
-        }, this);
-
         // Claim the watcher name early, since apps starting alongside the shell
         // may look for it only once. Discovery is async, so nothing reaches
         // _onItemRegistered before enable() returns.
@@ -3555,7 +3547,6 @@ export default class StatusTrayExtension extends Extension {
 
         this._settings.disconnectObject(this);
         this._settings = null;
-        Main.panel.disconnectObject(this);
 
         this._destroyOverflowButton();
         this._destroyIconStrip();
@@ -3611,17 +3602,17 @@ export default class StatusTrayExtension extends Extension {
             this._applyOverflow();
         });
 
-        // Detect when GNOME Shell externally disposes the TrayItem (e.g. during
-        // suspend/resume). Clean up our references so we don't later try to
-        // call methods on a disposed GObject. Internal destroys (from our own
-        // code) set _destroyedInternally first so we can skip them here.
+        // Our own code marks each TrayItem it destroys, so this runs when
+        // something else does it: in practice the shell destroying the panel
+        // at shutdown, without disabling extensions first. Only forget the
+        // item. Laying the overflow out again would rearrange a panel that is
+        // being destroyed (#42).
         trayItem.connect('destroy', () => {
             if (!trayItem._destroyedInternally && this._items.has(uniqueId)) {
                 debug(`TrayItem externally destroyed: ${uniqueId}`);
                 this._items.delete(uniqueId);
                 if (this._watcher)
                     this._watcher._removeItemTracking(uniqueId);
-                this._applyOverflow();
             }
         });
 
@@ -3962,7 +3953,7 @@ export default class StatusTrayExtension extends Extension {
      * idempotent.
      */
     _applyOverflow() {
-        if (!this._settings || this._panelDestroyed)
+        if (!this._settings)
             return;
 
         const enabled = this._settings.get_boolean('overflow-enabled');
